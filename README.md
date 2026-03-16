@@ -1,4 +1,5 @@
 # Live Dashboard
+ - https://now.monikadream.homes/
 
 实时设备活动仪表盘 —— 公开展示你正在使用的应用，拥有二次元风格 UI 和隐私优先设计。
 
