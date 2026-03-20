@@ -989,14 +989,18 @@ body.night-mode .firefly-container { display: block; }
   .panels {
     grid-template-columns: 1fr;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 0 1rem 1.5rem;
     gap: 0;
+    max-width: 100vw;
   }
 
   /* Left panel */
   .panel-left {
     padding: 1rem 0 1rem;
     min-height: auto;
+    min-width: 0;
+    overflow: hidden;
   }
   .blossom-deco { width: 36px; height: 36px; }
   .petal-container { mask-image: none; -webkit-mask-image: none; opacity: 0.6; }
@@ -1005,13 +1009,20 @@ body.night-mode .firefly-container { display: block; }
   .hero-app { font-size: var(--text-xl); }
   .hero-title { font-size: var(--text-lg); }
   .music-block { margin-top: 0.5rem; }
+  .music-info { min-width: 0; }
+  .music-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .music-artist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
   .orn-sep { margin: 0.5rem 0; }
 
-  .chart-section { margin-top: 0; }
+  .chart-section { margin-top: 0; min-width: 0; overflow: hidden; }
+  .usage-chart { min-width: 0; overflow: hidden; }
+  .usage-row { min-width: 0; overflow: hidden; }
   .usage-label { width: 60px; font-size: 10px; }
+  .usage-track { min-width: 0; }
   .usage-mins { font-size: 8px; width: 30px; }
 
-  .ai-summary { margin-top: 1.5rem; padding: 8px 12px; }
+  .ai-summary { margin-top: 1.5rem; padding: 8px 12px; overflow: hidden; }
+  .ai-summary-text { word-break: break-word; }
   .bottom-quote { padding-top: 0.5rem; font-size: 10px; }
 
   /* Right panel */
@@ -1019,6 +1030,8 @@ body.night-mode .firefly-container { display: block; }
     border-left: none;
     border-top: 1px solid var(--border-soft);
     padding: 1rem 0 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   /* Timeline header */
@@ -1028,13 +1041,15 @@ body.night-mode .firefly-container { display: block; }
   .btn-subtle { padding: 6px 10px; min-height: 36px; }
 
   /* Timeline items — larger touch targets */
-  .tl-item { padding: 8px 8px; gap: 6px; min-height: 36px; }
-  .tl-desc { font-size: 12px; }
+  .tl-list { min-width: 0; overflow: hidden; }
+  .tl-item { padding: 8px 8px; gap: 6px; min-height: 36px; min-width: 0; overflow: hidden; }
+  .tl-desc { font-size: 12px; min-width: 0; }
   .tl-dur { font-size: 10px; }
   .tl-device-name { font-size: 10px; }
-  .now-summary { padding: 8px 10px; margin-bottom: 0.75rem; }
+  .now-summary { padding: 8px 10px; margin-bottom: 0.75rem; overflow: hidden; }
+  .now-summary-row { min-width: 0; overflow: hidden; }
   .now-summary-dev { min-width: 60px; font-size: 10px; }
-  .now-summary-app { font-size: 12px; }
+  .now-summary-app { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Footer */
   .tl-footer { font-size: 8px; padding-top: 0.4rem; }
