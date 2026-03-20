@@ -128,7 +128,7 @@ function RoomBackground({ c, isNightMode }: { c: Colors; isNightMode: boolean })
       <rect x={winX} y={winY} width={winW} height={winH}
         rx={4} fill={c.winFill} stroke={c.winStroke} strokeWidth={2.5} />
       <rect x={winX + 2} y={winY + 2} width={winW - 4} height={winH - 4}
-        rx={3} fill={isNightMode ? "#0a0f1e" : "#fffce8"} />
+        rx={3} fill={c.winFill} />
       {/* Window panes */}
       <line x1={RW / 2} y1={winY + 2} x2={RW / 2} y2={winY + winH - 2}
         stroke={c.winStroke} strokeWidth={1.5} />
