@@ -536,3 +536,32 @@ body.night-mode .status-pointer::after {
 .separator-dashed {
   border-top: 2px dashed var(--color-border);
 }
+
+/* === Pixel Room ================================================ */
+
+.pixel-room-wrapper {
+  overflow-x: auto;
+  min-width: 240px;
+}
+
+@keyframes pixel-breathe {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(0.97); }
+}
+
+@keyframes pixel-screen-glow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.65; }
+}
+
+@keyframes pixel-zzz {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pixel-room-wrapper * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
