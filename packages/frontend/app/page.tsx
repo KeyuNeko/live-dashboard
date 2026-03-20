@@ -235,6 +235,13 @@ export default function Home() {
 
   return (
     <>
+      {/* Fireflies — visible only in night mode */}
+      <div className="firefly-container" aria-hidden="true">
+        <div className="firefly" /><div className="firefly" /><div className="firefly" />
+        <div className="firefly" /><div className="firefly" /><div className="firefly" />
+        <div className="firefly" /><div className="firefly" />
+      </div>
+
       {/* ── Header ── */}
       <header className="top-bar reveal">
         <div className="top-bar-inner">
