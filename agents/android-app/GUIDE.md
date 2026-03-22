@@ -1,104 +1,66 @@
-# Live Dashboard Android App — Code Guide
+# Live Dashboard Android App — 代码指南
 
-> Auto-generated reference for Lyra. Updated: 2026-03-22
+> 更新：2026-03-22
 
-## Build & Deploy
+## 构建与部署
 
-- **Min SDK**: check `app/build.gradle.kts` → `minSdk`
-- **Build**: `./gradlew assembleDebug` (from `agents/android-app/`)
-- **APK output**: `app/build/outputs/apk/debug/app-debug.apk`
-- **Install**: `adb install -r app/build/outputs/apk/debug/app-debug.apk`
+- **最低 SDK**：见 `app/build.gradle.kts` → `minSdk` (26)
+- **构建**：`./gradlew assembleDebug`（在 `agents/android-app/` 下执行）
+- **APK 输出**：`app/build/outputs/apk/debug/app-debug.apk`
+- **安装**：`adb install -r app/build/outputs/apk/debug/app-debug.apk`
 
-## Architecture Overview
+## 设计决策
 
-```
-MainActivity (Compose UI, 3 tabs)
-  ├─ SetupScreen     → server config + heartbeat toggle (starts/stops HeartbeatWorker)
-  ├─ HealthScreen    → Health Connect permissions & sync config
-  └─ StatusScreen    → permission status + debug log
+- **无前台应用检测**：Android 非 root 下无法可靠获取前台应用。小米 HyperOS 通过 cgroup v2 freezer 冻结无障碍服务，导致不可用。前台应用由 PC 端上报。
+- **无音乐监听**：v2 移除了 NotificationListenerService，简化为健康数据工具。
+- **仅 WorkManager**：HeartbeatWorker 使用自调度 OneTimeWorkRequest 绕过 15 分钟最小周期。底层 AlarmManager 即使被冻结也能唤醒。
+- **心跳默认关闭**：不是所有用户都需要显示手机在线，作为可选功能。
 
-Workers (WorkManager, survive process freeze):
-  ├─ HeartbeatWorker    → optional periodic battery + online status heartbeat
-  └─ HealthSyncWorker   → periodic Health Connect data sync
+## 关键流程
 
-Data:
-  ├─ SettingsStore   → DataStore (prefs) + EncryptedSharedPreferences (token)
-  ├─ ReportClient    → OkHttp3 HTTP client for API calls
-  └─ DebugLog        → in-memory circular log (100 entries)
-```
+### 心跳流程（可选）
+1. 用户在 SetupScreen 点击「开始监听」→ `HeartbeatWorker.schedule(context, interval)`
+2. HeartbeatWorker 延迟触发 → 读取电量信息
+3. `ReportClient.reportApp()` POST 到 `/api/report`，包含 `appId="android"` + 电量
+4. Worker 自调度下一个 OneTimeWorkRequest
+5. 通过 AlarmManager 存活于小米进程冻结
 
-## Design Decisions
+### 连接状态流程
+1. `MainActivity.DashboardTopBar()` 运行 `LaunchedEffect` 循环
+2. 每 5 秒创建临时 `ReportClient`，调用 `testConnection()`（GET `/api/health`）
+3. 更新状态 → TopAppBar 显示「已连接」(绿) 或「未连接」(灰)
 
-- **No AccessibilityService / foreground app detection**: Android does not provide a reliable way to detect the current foreground app without root or accessibility service. Xiaomi/HyperOS aggressively freezes accessibility services via cgroup v2 freezer, making it unusable. PC-side already reports foreground apps reliably.
-- **No MusicListenerService**: Removed in v2. NotificationListenerService for music detection was removed to simplify the app. The app now focuses on Health Connect data upload with optional heartbeat.
-- **WorkManager only**: HeartbeatWorker uses self-rescheduling OneTimeWorkRequest to bypass the 15-min periodic minimum. AlarmManager under the hood wakes the app even when frozen.
-- **Heartbeat is optional**: Disabled by default. Users who want to show phone online status + battery can enable it in SetupScreen.
+### 健康数据同步流程
+1. 用户在 HealthScreen 授权 Health Connect 权限
+2. 选择数据类型 + 同步间隔
+3. `HealthSyncWorker` 通过 WorkManager 定时运行
+4. 从 Health Connect 读取 → POST 到 `/api/health-data`
 
-## File Map
+## 常见问题
 
-| File | Role | When to touch |
-|------|------|---------------|
-| `MainActivity.kt` | Entry point, Scaffold + TopAppBar (connection status), tab navigation | UI layout changes, connection indicator |
-| `ui/screens/SetupScreen.kt` | Server URL/token/interval config, save button, heartbeat toggle | Config UI, heartbeat start/stop |
-| `ui/screens/HealthScreen.kt` | Health Connect permissions, type toggles, sync interval | Health data config |
-| `ui/screens/StatusScreen.kt` | Permission status cards, background keep-alive checks, debug log | Status display |
-| `ui/theme/Theme.kt` | Material 3 theme, colors (`Primary`, `Border`, etc.) | Color/style changes |
-| `data/SettingsStore.kt` | All persistent settings (DataStore + encrypted token) | Adding new settings |
-| `data/DebugLog.kt` | Thread-safe circular log buffer (ConcurrentLinkedDeque, max 100) | Logging changes |
-| `network/ReportClient.kt` | HTTP client: `reportApp()`, `reportHealthData()`, `testConnection()` | API changes, new endpoints |
-| `service/HeartbeatWorker.kt` | WorkManager worker: battery heartbeat, self-rescheduling (optional) | Reporting logic |
-| `health/HealthConnectManager.kt` | Reads 17 health data types from Google Health Connect API | Adding health types |
-| `health/HealthSyncWorker.kt` | WorkManager periodic worker for health sync (15-60 min) | Sync schedule, retry logic |
-| `health/HealthDataTypes.kt` | Health type metadata (labels, units, icons) | Health type display |
-| `DashboardApp.kt` | Application class, WorkManager config | App-level init |
-| `PermissionRationaleActivity.kt` | Health Connect permission rationale page | Permission flow |
-| `AndroidManifest.xml` | Permissions, service declarations, queries | New services/permissions |
-
-## Key Flows
-
-### Heartbeat Flow (Optional)
-1. User clicks "开始监听" in SetupScreen → `HeartbeatWorker.schedule(context, interval)`
-2. HeartbeatWorker fires after delay → reads battery info
-3. `ReportClient.reportApp()` POSTs to `/api/report` with `appId="android"`, battery
-4. Worker self-reschedules next OneTimeWorkRequest
-5. Survives Xiaomi process freezer via AlarmManager
-
-### Connection Status Flow
-1. `MainActivity.DashboardTopBar()` runs `LaunchedEffect` loop
-2. Every 5 seconds: creates temp `ReportClient`, calls `testConnection()` (GET `/api/health`)
-3. Updates `connected` state → shows "已连接" (green) or "未连接" (gray) in TopAppBar
-
-### Health Sync Flow
-1. User grants Health Connect permissions in HealthScreen
-2. User selects health types + sync interval
-3. `HealthSyncWorker` runs periodically via WorkManager
-4. Reads from Health Connect → POSTs to `/api/health-data`
-
-## Common Issues & Fixes
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| "未连接" but server is up | URL missing `https://` or token empty | Check SetupScreen config, ensure saved |
-| Health sync not working | Health Connect not installed or permissions denied | Install Health Connect app, grant permissions in HealthScreen |
-| Battery drain | Report interval too low (e.g. 10s) | Increase interval to 30-60s |
-| Token save fails | EncryptedSharedPreferences unavailable (rare, old devices) | Warning shown in SetupScreen; no workaround |
+| 症状 | 原因 | 解决 |
+|------|------|------|
+| 「未连接」但服务器正常 | URL 缺少 `https://` 或 Token 为空 | 检查 SetupScreen 配置，确认已保存 |
+| 健康同步不工作 | Health Connect 未安装或权限未授权 | 安装 Health Connect，在 HealthScreen 授权 |
+| 耗电快 | 心跳间隔过低（如 10s） | 将间隔调整到 30-60s |
+| Token 保存失败 | EncryptedSharedPreferences 不可用（旧设备） | SetupScreen 会显示警告，无解决方案 |
 | 后台被杀 | OEM 电池优化 | StatusScreen → 忽略电池优化 + 厂商特殊设置 |
 
-## API Endpoints Used
+## API 接口
 
-| Method | Path | Purpose | Called by |
-|--------|------|---------|-----------|
-| POST | `/api/report` | Report heartbeat (battery + online status) | HeartbeatWorker |
-| POST | `/api/health-data` | Upload health records | HealthSyncWorker |
-| GET | `/api/health` | Connection test (health check) | MainActivity auto-test |
+| 方法 | 路径 | 用途 | 调用者 |
+|------|------|------|--------|
+| POST | `/api/report` | 心跳上报（电量 + 在线状态） | HeartbeatWorker |
+| POST | `/api/health-data` | 上传健康数据记录 | HealthSyncWorker |
+| GET | `/api/health` | 连接测试 | MainActivity |
 
-## Settings Keys (DataStore)
+## DataStore 配置键
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `server_url` | String | `""` | Server base URL (HTTPS required) |
-| `report_interval` | Int | `60` | Heartbeat interval in seconds (10-300) |
-| `health_sync_interval` | Int | `15` | Health sync interval in minutes (15-60) |
-| `enabled_health_types` | Set\<String\> | `emptySet()` | Which health types to sync |
-| `monitoring_enabled` | Boolean | `false` | Whether heartbeat is active |
-| `token` (encrypted) | String | `null` | Auth token (AES256-GCM) |
+| 键 | 类型 | 默认值 | 说明 |
+|----|------|--------|------|
+| `server_url` | String | `""` | 服务器地址（必须 HTTPS） |
+| `report_interval` | Int | `60` | 心跳间隔，秒（10-300） |
+| `health_sync_interval` | Int | `15` | 健康同步间隔，分钟（15-60） |
+| `enabled_health_types` | Set\<String\> | `emptySet()` | 启用的健康数据类型 |
+| `monitoring_enabled` | Boolean | `false` | 心跳是否开启 |
+| `token`（加密） | String | `null` | 认证令牌（AES256-GCM） |
