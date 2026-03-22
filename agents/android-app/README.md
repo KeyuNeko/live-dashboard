@@ -1,9 +1,5 @@
 # Live Dashboard Android App — 源码
 
-本分支包含 Android 客户端的完整源代码。
-
-下载 APK 请前往 [main 分支](https://github.com/Monika-Dream/live-dashboard/tree/main/agents/android-app)。
-
 ## 构建
 
 见 [BUILD.md](./BUILD.md)。
