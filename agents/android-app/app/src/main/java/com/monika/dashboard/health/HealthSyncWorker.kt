@@ -84,21 +84,7 @@ class HealthSyncWorker(
             return Result.success()
         }
 
-        // Android 14+: check background read permission before attempting sync
         val manager = HealthConnectManager(applicationContext)
-        if (manager.needsBackgroundPermission) {
-            try {
-                val granted = manager.getGrantedPermissions()
-                if (manager.backgroundReadPermission !in granted) {
-                    DebugLog.log("健康", "缺少后台读取权限，请打开 APP 点击授权")
-                    Log.w(TAG, "Background read permission not granted, skipping sync")
-                    return Result.success()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Failed to check background permission: ${e.message}")
-                // Continue anyway — readRecords() has SecurityException fallback
-            }
-        }
 
         val client = try {
             ReportClient(url, token)

@@ -1,7 +1,7 @@
 package com.monika.dashboard.health
 
-import android.os.Build
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -41,18 +41,20 @@ class HealthConnectManager(private val context: Context) {
         HealthConnectClient.getOrCreate(context)
     }
 
-    /** Background read permission (Android 14+) */
+    /** Background read permission */
     val backgroundReadPermission: String =
         HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
 
-    /** Whether this device needs background read permission */
-    val needsBackgroundPermission: Boolean = Build.VERSION.SDK_INT >= 34
+    /** Check if this device needs background read permission (Android 14+) */
+    fun isBackgroundReadSupported(): Boolean = Build.VERSION.SDK_INT >= 34
 
-    /** All read permissions the app may request (background permission only on Android 14+) */
-    val allReadPermissions: Set<String> = buildSet {
-        addAll(HealthDataType.entries.map { it.permission })
-        if (needsBackgroundPermission) add(backgroundReadPermission)
-    }
+    /** Data-type read permissions only (for permission request dialog) */
+    val dataReadPermissions: Set<String> =
+        HealthDataType.entries.map { it.permission }.toSet()
+
+    /** All read permissions including background (for full permission check) */
+    val allReadPermissions: Set<String> =
+        dataReadPermissions + backgroundReadPermission
 
     /** Check which permissions are currently granted */
     suspend fun getGrantedPermissions(): Set<String> {
