@@ -1,5 +1,6 @@
 package com.monika.dashboard.health
 
+import android.os.Build
 import android.content.Context
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
@@ -15,6 +16,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import java.time.Instant
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
 
 class HealthConnectManager(private val context: Context) {
@@ -39,8 +41,18 @@ class HealthConnectManager(private val context: Context) {
         HealthConnectClient.getOrCreate(context)
     }
 
-    /** All read permissions the app may request */
-    val allReadPermissions: Set<String> = HealthDataType.entries.map { it.permission }.toSet()
+    /** Background read permission (Android 14+) */
+    val backgroundReadPermission: String =
+        HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+
+    /** Whether this device needs background read permission */
+    val needsBackgroundPermission: Boolean = Build.VERSION.SDK_INT >= 34
+
+    /** All read permissions the app may request (background permission only on Android 14+) */
+    val allReadPermissions: Set<String> = buildSet {
+        addAll(HealthDataType.entries.map { it.permission })
+        if (needsBackgroundPermission) add(backgroundReadPermission)
+    }
 
     /** Check which permissions are currently granted */
     suspend fun getGrantedPermissions(): Set<String> {
@@ -77,6 +89,7 @@ class HealthConnectManager(private val context: Context) {
         if (permittedTypes.isEmpty()) return emptyList()
 
         return coroutineScope {
+            val securityDeniedCount = AtomicInteger(0)
             val deferreds = permittedTypes.map { type ->
                 async {
                     try {
@@ -87,6 +100,11 @@ class HealthConnectManager(private val context: Context) {
                         results
                     } catch (e: CancellationException) {
                         throw e
+                    } catch (e: SecurityException) {
+                        securityDeniedCount.incrementAndGet()
+                        DebugLog.log("健康", "读取${type.displayName}时权限被拒绝，请重新授权")
+                        Log.w(TAG, "SecurityException reading ${type.key}: ${e.message}")
+                        emptyList<ReportClient.HealthRecord>()
                     } catch (e: Exception) {
                         DebugLog.log("健康", "读取${type.displayName}失败: ${e.message}")
                         Log.w(TAG, "Failed to read ${type.key}: ${e.message}")
@@ -94,7 +112,12 @@ class HealthConnectManager(private val context: Context) {
                     }
                 }
             }
-            deferreds.awaitAll().flatten()
+            val results = deferreds.awaitAll().flatten()
+            val denied = securityDeniedCount.get()
+            if (denied > 0) {
+                DebugLog.log("健康", "后台读取权限不足，跳过 $denied 种类型")
+            }
+            results
         }
     }
 
