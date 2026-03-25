@@ -26,3 +26,4 @@ agents/android-app/app/build/
 agents/android-app/build/
 agents/android-app/keystore.properties
 agents/android-app/*.keystore
+*.hprof
