@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.monika.dashboard"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.monika.dashboard"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
     }
@@ -68,8 +68,8 @@ dependencies {
     // OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Health Connect (1.1.0 stable requires compileSdk 36 + AGP 8.9.1, stay on alpha for now)
-    implementation("androidx.health.connect:connect-client:1.1.0-alpha07")
+    // Health Connect (alpha is the only available channel for this library)
+    implementation("androidx.health.connect:connect-client:1.1.0-beta01")
 
     // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.0")

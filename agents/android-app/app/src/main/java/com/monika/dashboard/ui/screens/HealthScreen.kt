@@ -23,6 +23,7 @@ import com.monika.dashboard.data.SettingsStore
 import com.monika.dashboard.health.HealthConnectManager
 import com.monika.dashboard.health.HealthDataType
 import com.monika.dashboard.health.HealthSyncWorker
+import com.monika.dashboard.data.DebugLog
 import com.monika.dashboard.ui.theme.Border
 import com.monika.dashboard.ui.theme.Primary
 import com.monika.dashboard.ui.theme.Secondary
@@ -180,19 +181,38 @@ fun HealthScreen(settings: SettingsStore) {
             }
         }
 
-        // Manual sync button
-        Button(
-            onClick = {
-                scope.launch {
-                    HealthSyncWorker.syncNow(context)
-                }
-            },
-            enabled = isAvailable && enabledTypes.isNotEmpty(),
+        // Manual sync buttons
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Primary)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text("立即同步")
+            Button(
+                onClick = {
+                    scope.launch {
+                        HealthSyncWorker.syncNow(context, foreground = true)
+                        DebugLog.log("健康", "已触发立即同步")
+                    }
+                },
+                enabled = isAvailable && enabledTypes.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Primary)
+            ) {
+                Text("立即同步")
+            }
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        HealthSyncWorker.syncNow(context, foreground = true, fullSync = true)
+                        DebugLog.log("健康", "已触发全量同步（7天）")
+                    }
+                },
+                enabled = isAvailable && enabledTypes.isNotEmpty(),
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text("全量同步")
+            }
         }
 
         Divider(color = Border, thickness = 1.dp)

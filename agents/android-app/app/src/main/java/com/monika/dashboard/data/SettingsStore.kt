@@ -24,6 +24,7 @@ class SettingsStore(private val context: Context) {
         val HEALTH_SYNC_INTERVAL = intPreferencesKey("health_sync_interval")
         val ENABLED_HEALTH_TYPES = stringSetPreferencesKey("enabled_health_types")
         val MONITORING_ENABLED = booleanPreferencesKey("monitoring_enabled")
+        val LAST_SYNC_TIMESTAMP = longPreferencesKey("last_sync_timestamp")
     }
 
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
@@ -46,6 +47,10 @@ class SettingsStore(private val context: Context) {
         prefs[Keys.MONITORING_ENABLED] ?: false
     }
 
+    val lastSyncTimestamp: Flow<Long> = context.dataStore.data.map { prefs ->
+        prefs[Keys.LAST_SYNC_TIMESTAMP] ?: 0L
+    }
+
     suspend fun setServerUrl(url: String) {
         require(validateUrl(url)) { "Invalid URL: must be HTTPS or http://localhost" }
         context.dataStore.edit { it[Keys.SERVER_URL] = url.trim() }
@@ -65,6 +70,16 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMonitoringEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.MONITORING_ENABLED] = enabled }
+    }
+
+    /** Update last sync timestamp with compare-and-set (only advances forward). */
+    suspend fun setLastSyncTimestamp(millis: Long) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.LAST_SYNC_TIMESTAMP] ?: 0L
+            if (millis > current) {
+                prefs[Keys.LAST_SYNC_TIMESTAMP] = millis
+            }
+        }
     }
 
     // --- Sensitive token via EncryptedSharedPreferences ---

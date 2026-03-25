@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.*
@@ -14,7 +15,10 @@ import com.monika.dashboard.network.ReportClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
@@ -45,16 +49,17 @@ class HealthConnectManager(private val context: Context) {
     val backgroundReadPermission: String =
         HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
 
-    /** Check if this device needs background read permission (Android 14+) */
-    fun isBackgroundReadSupported(): Boolean = Build.VERSION.SDK_INT >= 34
+    /** Whether this device needs background read permission */
+    val needsBackgroundPermission: Boolean = Build.VERSION.SDK_INT >= 34
 
-    /** Data-type read permissions only (for permission request dialog) */
-    val dataReadPermissions: Set<String> =
-        HealthDataType.entries.map { it.permission }.toSet()
+    /** Data read permissions only (no background permission) — for authorization UI */
+    val dataReadPermissions: Set<String> = HealthDataType.entries.map { it.permission }.toSet()
 
-    /** All read permissions including background (for full permission check) */
-    val allReadPermissions: Set<String> =
-        dataReadPermissions + backgroundReadPermission
+    /** All read permissions the app may request (background permission only on Android 14+) */
+    val allReadPermissions: Set<String> = buildSet {
+        addAll(dataReadPermissions)
+        if (needsBackgroundPermission) add(backgroundReadPermission)
+    }
 
     /** Check which permissions are currently granted */
     suspend fun getGrantedPermissions(): Set<String> {
@@ -65,16 +70,33 @@ class HealthConnectManager(private val context: Context) {
     fun createPermissionRequestContract() =
         PermissionController.createRequestPermissionResultContract()
 
+    /** Check if background read is supported at runtime (Android 15+ feature detection). */
+    suspend fun isBackgroundReadSupported(): Boolean {
+        return try {
+            val features = client.features
+            features.getFeatureStatus(
+                HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND
+            ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     suspend fun readRecords(
         enabledTypes: Set<String>,
-        since: Instant
+        since: Instant,
+        until: Instant = Instant.now()
     ): List<ReportClient.HealthRecord> {
-        val now = Instant.now()
-        if (!since.isBefore(now)) return emptyList()
-        val timeRange = TimeRangeFilter.between(since, now)
+        if (!since.isBefore(until)) return emptyList()
+        val timeRange = TimeRangeFilter.between(since, until)
 
         // Check permissions first, only read types with granted permissions
         val granted = getGrantedPermissions()
+        if (com.monika.dashboard.BuildConfig.DEBUG) {
+            Log.i(TAG, "Granted permissions: ${granted.size}/${allReadPermissions.size}")
+            Log.i(TAG, "Time range: $since .. $until")
+            Log.i(TAG, "Enabled types: ${enabledTypes.size}")
+        }
         DebugLog.log("健康", "已授权权限数: ${granted.size}/${allReadPermissions.size}")
         val permittedTypes = mutableListOf<HealthDataType>()
         val missingPerms = mutableListOf<String>()
@@ -90,37 +112,41 @@ class HealthConnectManager(private val context: Context) {
         DebugLog.log("健康", "将读取 ${permittedTypes.size} 种类型")
         if (permittedTypes.isEmpty()) return emptyList()
 
-        return coroutineScope {
-            val securityDeniedCount = AtomicInteger(0)
-            val deferreds = permittedTypes.map { type ->
-                async {
-                    try {
-                        val results = readByType(type, timeRange)
-                        if (results.isNotEmpty()) {
-                            DebugLog.log("健康", "${type.displayName}: 读到 ${results.size} 条")
-                        }
-                        results
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: SecurityException) {
-                        securityDeniedCount.incrementAndGet()
-                        DebugLog.log("健康", "读取${type.displayName}时权限被拒绝，请重新授权")
-                        Log.w(TAG, "SecurityException reading ${type.key}: ${e.message}")
-                        emptyList<ReportClient.HealthRecord>()
-                    } catch (e: Exception) {
-                        DebugLog.log("健康", "读取${type.displayName}失败: ${e.message}")
-                        Log.w(TAG, "Failed to read ${type.key}: ${e.message}")
-                        emptyList<ReportClient.HealthRecord>()
-                    }
+        val allResults = mutableListOf<ReportClient.HealthRecord>()
+        var securityDeniedCount = 0
+        for (type in permittedTypes) {
+            try {
+                val results = withTimeout(15_000L) {
+                    readByType(type, timeRange)
                 }
+                if (results.isNotEmpty()) {
+                    DebugLog.log("健康", "${type.displayName}: ${results.size} 条")
+                    allResults.addAll(results)
+                }
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                DebugLog.log("健康", "${type.displayName}: 超时，跳过")
+                Log.w(TAG, "Timeout reading ${type.key}")
+            } catch (e: SecurityException) {
+                securityDeniedCount++
+                DebugLog.log("健康", "${type.displayName}: 权限被拒绝")
+                Log.w(TAG, "SecurityException reading ${type.key}: ${e.message}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                DebugLog.log("健康", "${type.displayName}: 失败 ${e.message}")
+                Log.w(TAG, "Failed to read ${type.key}: ${e.message}")
             }
-            val results = deferreds.awaitAll().flatten()
-            val denied = securityDeniedCount.get()
-            if (denied > 0) {
-                DebugLog.log("健康", "后台读取权限不足，跳过 $denied 种类型")
-            }
-            results
         }
+        if (securityDeniedCount > 0) {
+            DebugLog.log("健康", "权限不足，跳过 $securityDeniedCount 种类型")
+        }
+        return allResults
+    }
+
+    /** Read all records from today (local midnight to now). For foreground sync on app open. */
+    suspend fun readTodayRecords(enabledTypes: Set<String>): List<ReportClient.HealthRecord> {
+        val todayStart = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant()
+        return readRecords(enabledTypes, todayStart, Instant.now())
     }
 
     private suspend fun readByType(

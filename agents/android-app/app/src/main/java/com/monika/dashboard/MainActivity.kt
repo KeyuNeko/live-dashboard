@@ -14,10 +14,13 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monika.dashboard.data.SettingsStore
+import com.monika.dashboard.health.HealthConnectManager
+import com.monika.dashboard.health.HealthSyncWorker
 import com.monika.dashboard.network.ReportClient
 import com.monika.dashboard.ui.screens.HealthScreen
 import com.monika.dashboard.ui.screens.SetupScreen
@@ -25,6 +28,7 @@ import com.monika.dashboard.ui.screens.StatusScreen
 import com.monika.dashboard.ui.theme.DashboardTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -115,6 +119,18 @@ private fun DashboardTopBar(settings: SettingsStore) {
 private fun MainContent(settings: SettingsStore, modifier: Modifier = Modifier) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val tabs = listOf("设置", "健康", "状态")
+    val context = LocalContext.current
+
+    // Trigger foreground health sync once on app open
+    LaunchedEffect(Unit) {
+        val enabledTypes = settings.enabledHealthTypes.first()
+        val url = settings.serverUrl.first()
+        val token = withContext(Dispatchers.IO) { settings.getToken() }
+        if (enabledTypes.isNotEmpty() && url.isNotEmpty() && !token.isNullOrEmpty()
+            && HealthConnectManager.isAvailable(context)) {
+            HealthSyncWorker.syncNow(context, foreground = true)
+        }
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         TabRow(
