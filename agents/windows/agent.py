@@ -11,6 +11,7 @@ import logging
 import logging.handlers
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -388,6 +389,107 @@ def validate_config(cfg: dict) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Windows autostart
+# ---------------------------------------------------------------------------
+AUTOSTART_NAME = "LiveDashboardAgent"
+AUTOSTART_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def _get_autostart_command() -> str:
+    """Return the command line used for login autostart."""
+    if getattr(sys, "frozen", False):
+        return subprocess.list2cmdline([str(Path(sys.executable).resolve())])
+    return subprocess.list2cmdline([sys.executable, str(Path(__file__).resolve())])
+
+
+def _has_registry_autostart() -> bool:
+    """Return whether the current user has a Run-key startup entry."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_RUN_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, AUTOSTART_NAME)
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        log.warning("Autostart registry query failed: %s", e)
+        return False
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _set_registry_autostart(enabled: bool) -> bool:
+    """Enable/disable login autostart through the current-user Run key."""
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_RUN_KEY) as key:
+            if enabled:
+                winreg.SetValueEx(
+                    key, AUTOSTART_NAME, 0, winreg.REG_SZ, _get_autostart_command()
+                )
+            else:
+                try:
+                    winreg.DeleteValue(key, AUTOSTART_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except OSError as e:
+        log.error("Autostart registry update failed: %s", e)
+        return False
+
+
+def _has_legacy_startup_task() -> bool:
+    """Return whether the legacy scheduled task based autostart exists."""
+    try:
+        result = subprocess.run(
+            ["schtasks", "/query", "/tn", AUTOSTART_NAME],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log.debug("Autostart task query failed: %s", e)
+        return False
+    return result.returncode == 0
+
+
+def _remove_legacy_startup_task() -> bool:
+    """Remove the legacy scheduled task if it exists."""
+    if not _has_legacy_startup_task():
+        return True
+    try:
+        result = subprocess.run(
+            ["schtasks", "/delete", "/tn", AUTOSTART_NAME, "/f"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("Legacy startup task removal failed: %s", e)
+        return False
+    if result.returncode == 0:
+        return True
+    output = (result.stderr or result.stdout).strip()
+    if output:
+        log.warning("Legacy startup task removal failed: %s", output)
+    return False
+
+
+def is_autostart_enabled() -> bool:
+    """Return whether the agent is configured to launch at Windows logon."""
+    return _has_registry_autostart() or _has_legacy_startup_task()
+
+
+def show_message(title: str, message: str, error: bool = False) -> None:
+    """Show a best-effort native message box for user-facing actions."""
+    try:
+        flags = 0x10 if error else 0x40
+        ctypes.windll.user32.MessageBoxW(None, message, title, flags)  # type: ignore[attr-defined]
+    except Exception:
+        log.info("%s: %s", title, message)
+
+
+# ---------------------------------------------------------------------------
 # Settings Dialog
 # ---------------------------------------------------------------------------
 def show_settings_dialog(current_config: dict | None = None) -> dict | None:
@@ -571,6 +673,8 @@ class TrayAgent:
             p.Menu.SEPARATOR,
             p.MenuItem("日志文件", self._toggle_log,
                        checked=lambda _: _file_handler is not None),
+            p.MenuItem("开机自启", self._toggle_autostart,
+                       checked=lambda _: is_autostart_enabled()),
             p.MenuItem("设置", self._open_settings),
             p.Menu.SEPARATOR,
             p.MenuItem("退出", self._quit),
@@ -604,6 +708,33 @@ class TrayAgent:
         cfg = load_config()
         cfg["enable_log"] = enabled
         save_config(cfg)
+        if self._icon:
+            self._icon.update_menu()
+
+    def _toggle_autostart(self):
+        enabled = is_autostart_enabled()
+        if enabled:
+            registry_ok = _set_registry_autostart(False)
+            legacy_ok = _remove_legacy_startup_task()
+            if registry_ok and legacy_ok:
+                log.info("Autostart disabled")
+            else:
+                show_message(
+                    "Live Dashboard",
+                    "关闭开机自启时未能清理全部启动项。\n请检查任务计划程序中的 LiveDashboardAgent。",
+                    error=True,
+                )
+        else:
+            if _set_registry_autostart(True):
+                log.info("Autostart enabled")
+            else:
+                show_message(
+                    "Live Dashboard",
+                    "无法开启开机自启，请检查当前账户是否有写入启动项的权限。",
+                    error=True,
+                )
+        if self._icon:
+            self._icon.update_menu()
 
     def _open_settings(self):
         self._settings_requested = True
