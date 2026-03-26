@@ -26,9 +26,12 @@ class HeartbeatWorker(
         private const val TAG = "Heartbeat"
         private const val WORK_NAME = "heartbeat_report"
         private const val KEY_INTERVAL_SEC = "interval_sec"
+        const val MIN_INTERVAL_SECONDS = 10
+        const val MAX_INTERVAL_SECONDS = 50
+        const val DEFAULT_INTERVAL_SECONDS = 30
 
-        fun schedule(context: Context, intervalSeconds: Int = 60) {
-            val safe = intervalSeconds.coerceIn(30, 300)
+        fun schedule(context: Context, intervalSeconds: Int = DEFAULT_INTERVAL_SECONDS) {
+            val safe = intervalSeconds.coerceIn(MIN_INTERVAL_SECONDS, MAX_INTERVAL_SECONDS)
             enqueueNext(context, safe)
             DebugLog.log("心跳Worker", "已启动，间隔 ${safe} 秒")
             Log.i(TAG, "Scheduled heartbeat every ${safe}s")
@@ -61,12 +64,11 @@ class HeartbeatWorker(
 
     override suspend fun doWork(): Result {
         val settings = SettingsStore(applicationContext)
-        val intervalSec = inputData.getInt(KEY_INTERVAL_SEC, 60)
+        val intervalSec = inputData.getInt(KEY_INTERVAL_SEC, DEFAULT_INTERVAL_SECONDS)
 
         val enabled = settings.monitoringEnabled.first()
         if (!enabled) {
             DebugLog.log("心跳Worker", "监听未开启，跳过")
-            enqueueNext(applicationContext, intervalSec)
             return Result.success()
         }
 

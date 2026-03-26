@@ -28,7 +28,7 @@ fun SetupScreen(settings: SettingsStore) {
     val context = LocalContext.current
 
     val serverUrl by settings.serverUrl.collectAsState(initial = "")
-    val reportInterval by settings.reportInterval.collectAsState(initial = 60)
+    val reportInterval by settings.reportInterval.collectAsState(initial = HeartbeatWorker.DEFAULT_INTERVAL_SECONDS)
     val monitoringEnabled by settings.monitoringEnabled.collectAsState(initial = false)
 
     var urlInput by remember(serverUrl) { mutableStateOf(serverUrl) }
@@ -101,7 +101,11 @@ fun SetupScreen(settings: SettingsStore) {
             value = intervalInput,
             onValueChange = { intervalInput = it.filter { c -> c.isDigit() } },
             label = { Text("心跳间隔（秒）") },
-            supportingText = { Text("10-300 秒") },
+            supportingText = {
+                Text(
+                    "${HeartbeatWorker.MIN_INTERVAL_SECONDS}-${HeartbeatWorker.MAX_INTERVAL_SECONDS} 秒（服务端 60 秒判离线，预留缓冲）"
+                )
+            },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -123,9 +127,18 @@ fun SetupScreen(settings: SettingsStore) {
                     }
                     settings.setServerUrl(url)
                     settings.setToken(tokenInput)
-                    val seconds = intervalInput.toIntOrNull()?.coerceIn(10, 300) ?: 60
+                    val seconds = intervalInput.toIntOrNull()?.coerceIn(
+                        HeartbeatWorker.MIN_INTERVAL_SECONDS,
+                        HeartbeatWorker.MAX_INTERVAL_SECONDS,
+                    ) ?: HeartbeatWorker.DEFAULT_INTERVAL_SECONDS
                     settings.setReportInterval(seconds)
-                    statusMsg = "设置已保存"
+                    intervalInput = seconds.toString()
+                    if (monitoringEnabled) {
+                        HeartbeatWorker.schedule(context, seconds)
+                        statusMsg = "设置已保存，并已应用新的心跳间隔（${seconds} 秒）"
+                    } else {
+                        statusMsg = "设置已保存"
+                    }
                 }
             },
             modifier = Modifier.fillMaxWidth(),
@@ -142,12 +155,18 @@ fun SetupScreen(settings: SettingsStore) {
                     val newState = !monitoringEnabled
                     settings.setMonitoringEnabled(newState)
                     if (newState) {
-                        val seconds = intervalInput.toIntOrNull()?.coerceIn(10, 300) ?: 60
+                        val seconds = intervalInput.toIntOrNull()?.coerceIn(
+                            HeartbeatWorker.MIN_INTERVAL_SECONDS,
+                            HeartbeatWorker.MAX_INTERVAL_SECONDS,
+                        ) ?: HeartbeatWorker.DEFAULT_INTERVAL_SECONDS
+                        settings.setReportInterval(seconds)
+                        intervalInput = seconds.toString()
                         HeartbeatWorker.schedule(context, seconds)
+                        statusMsg = "监听已开启，当前间隔 ${seconds} 秒"
                     } else {
                         HeartbeatWorker.cancel(context)
+                        statusMsg = "监听已关闭"
                     }
-                    statusMsg = if (newState) "监听已开启" else "监听已关闭"
                 }
             },
             modifier = Modifier.fillMaxWidth(),

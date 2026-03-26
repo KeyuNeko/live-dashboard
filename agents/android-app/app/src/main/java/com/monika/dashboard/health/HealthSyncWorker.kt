@@ -1,7 +1,6 @@
 package com.monika.dashboard.health
 
 import android.content.Context
-import android.os.Build
 import android.util.Log
 import androidx.work.*
 import com.monika.dashboard.data.DebugLog
@@ -116,16 +115,27 @@ class HealthSyncWorker(
             val hasBgPerm = manager.backgroundReadPermission in granted
 
             if (!hasBgPerm) {
-                // Expected on Android 14 without background permission, don't spam DebugLog
+                DebugLog.log("健康", "后台读取权限未授权，跳过后台同步")
                 Log.d(TAG, "Background read permission not granted, skipping periodic sync")
                 return Result.success()
             }
 
-            // Android 15+: additional runtime feature check
-            if (Build.VERSION.SDK_INT >= 35 && !manager.isBackgroundReadSupported()) {
-                DebugLog.log("健康", "设备不支持后台健康数据读取功能")
-                Log.w(TAG, "Background read feature not supported")
-                return Result.success()
+            val backgroundAvailability = manager.getBackgroundReadAvailability()
+            if (!backgroundAvailability.isAvailable) {
+                if (backgroundAvailability.errorMessage.isNullOrEmpty()) {
+                    DebugLog.log("健康", "设备当前不支持后台健康读取，保持打开 APP 时同步")
+                    Log.w(TAG, "Background read feature unavailable")
+                    return Result.success()
+                }
+
+                DebugLog.log(
+                    "健康",
+                    "后台读取能力检测失败：${backgroundAvailability.errorMessage}，本次仍尝试后台同步"
+                )
+                Log.w(
+                    TAG,
+                    "Background read feature check failed, will still attempt sync: ${backgroundAvailability.errorMessage}"
+                )
             }
         }
 
@@ -154,9 +164,17 @@ class HealthSyncWorker(
                 .withZone(java.time.ZoneId.systemDefault())
             val syncMode = if (isFullSync || lastSync <= 0) "全量" else "增量"
             DebugLog.log("健康", "${syncMode}同步, 类型: ${enabledTypes.size}, 范围: ${fmt.format(since)}..${fmt.format(until)}")
-            val records = withTimeout(60_000L) {
+            val readResult = withTimeout(60_000L) {
                 manager.readRecords(enabledTypes, since, until)
             }
+            val records = readResult.records
+
+            if (!isForeground && readResult.allAttemptedTypesDenied) {
+                DebugLog.log("健康", "后台读取被系统拒绝，未推进同步游标，请重新授权后台读取")
+                Log.w(TAG, "Background read denied for all requested types")
+                return Result.success()
+            }
+
             DebugLog.log("健康", "读取完成, 共 ${records.size} 条")
 
             if (records.isEmpty()) {

@@ -19,7 +19,7 @@ Android 客户端是一个 Kotlin + Jetpack Compose 应用，通过 Health Conne
 | **Health Connect 同步** | 读取步数、心率、睡眠、血氧、体温等 18 种健康数据，定时上传到服务端 |
 | **增量同步** | DataStore 持久化 `lastSyncTimestamp`，增量查询（带 5 分钟重叠窗口），服务端去重 |
 | **全量同步** | 健康页面「全量同步」按钮，强制 7 天回溯查询，防止时间戳过期 |
-| **Android 15+ 后台读取** | 运行时特性检测 `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND`，支持后台静默同步 |
+| **后台静默同步** | 运行时检测 `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND`；在支持该特性的设备（通常为 Android 15+）上，额外授权后台读取后可自动同步 |
 | **心跳上报** | 可选功能，定时上报在线状态和电池信息 |
 | **电量上报** | 自动上报电池电量和充电状态 |
 | **连接状态检测** | 每 5 秒测试服务器连接，顶栏实时显示连接状态 |

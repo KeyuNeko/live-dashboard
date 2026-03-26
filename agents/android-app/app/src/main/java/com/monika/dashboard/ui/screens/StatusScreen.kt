@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.repeatOnLifecycle
 import com.monika.dashboard.data.DebugLog
+import com.monika.dashboard.health.BackgroundReadAvailability
 import com.monika.dashboard.health.HealthConnectManager
 import com.monika.dashboard.ui.theme.Border
 import com.monika.dashboard.ui.theme.TextMuted
@@ -34,12 +35,11 @@ import java.util.Locale
 @Composable
 fun StatusScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var healthAvailable by remember { mutableStateOf(false) }
-    var backgroundReadSupported by remember { mutableStateOf<Boolean?>(null) }
+    var backgroundReadAvailability by remember { mutableStateOf<BackgroundReadAvailability?>(null) }
     var bgPermGranted by remember { mutableStateOf(false) }
     // Always create manager (constructor is cheap, client is lazy)
     val hcManager = remember(context) { HealthConnectManager(context.applicationContext) }
@@ -48,21 +48,23 @@ fun StatusScreen() {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             healthAvailable = HealthConnectManager.isAvailable(context)
             if (healthAvailable) {
-                val (bgSupported, permGranted) = withContext(Dispatchers.IO) {
-                    val supported = try {
-                        hcManager.isBackgroundReadSupported()
+                val (availability, permGranted) = withContext(Dispatchers.IO) {
+                    val availability = try {
+                        hcManager.getBackgroundReadAvailability()
                     } catch (e: CancellationException) { throw e
-                    } catch (_: Exception) { false }
+                    } catch (e: Exception) {
+                        BackgroundReadAvailability(false, errorMessage = e.message ?: e.javaClass.simpleName)
+                    }
                     val granted = try {
                         hcManager.getGrantedPermissions()
                     } catch (e: CancellationException) { throw e
                     } catch (_: Exception) { emptySet() }
-                    Pair(supported, hcManager.backgroundReadPermission in granted)
+                    Pair(availability, hcManager.backgroundReadPermission in granted)
                 }
-                backgroundReadSupported = bgSupported
+                backgroundReadAvailability = availability
                 bgPermGranted = permGranted
             } else {
-                backgroundReadSupported = false
+                backgroundReadAvailability = null
                 bgPermGranted = false
             }
         }
@@ -161,21 +163,18 @@ fun StatusScreen() {
 
         // Background health sync status
         if (healthAvailable) {
-            val needsBgPerm = hcManager.needsBackgroundPermission // Android 14+
-            // Determine background sync state
-            val bgEnabled = when {
-                !needsBgPerm -> true // Android < 14: no special permission needed
-                Build.VERSION.SDK_INT >= 35 -> bgPermGranted && backgroundReadSupported == true
-                else -> bgPermGranted // Android 14: permission alone is sufficient
-            }
-            val bgUnavailable = needsBgPerm && Build.VERSION.SDK_INT >= 35
-                    && backgroundReadSupported == false
+            val needsBgPerm = hcManager.needsBackgroundPermission
+            val bgFeatureAvailable = backgroundReadAvailability?.isAvailable == true
+            val bgFeatureCheckFailed = !backgroundReadAvailability?.errorMessage.isNullOrEmpty()
+            val bgEnabled = bgPermGranted && bgFeatureAvailable
+            val bgUnavailable = needsBgPerm && !bgFeatureAvailable && !bgFeatureCheckFailed
 
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
                 color = when {
                     bgEnabled -> MaterialTheme.colorScheme.secondaryContainer
+                    bgFeatureCheckFailed -> MaterialTheme.colorScheme.surfaceVariant
                     bgUnavailable -> MaterialTheme.colorScheme.surfaceVariant
                     else -> MaterialTheme.colorScheme.errorContainer
                 }
@@ -195,12 +194,12 @@ fun StatusScreen() {
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = "后台健康同步（需要安卓15+ 喵~）",
+                                text = "后台健康同步（取决于设备与 Health Connect 版本）",
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
                         // Show "去授权" button when permission can be granted but hasn't been
-                        if (needsBgPerm && !bgPermGranted && !bgUnavailable) {
+                        if (needsBgPerm && !bgPermGranted && (bgFeatureAvailable || bgFeatureCheckFailed)) {
                             TextButton(onClick = {
                                 try {
                                     context.startActivity(
@@ -228,10 +227,12 @@ fun StatusScreen() {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = when {
-                            !needsBgPerm -> "无需特殊权限，后台同步正常工作"
-                            bgPermGranted -> "已授权后台读取健康数据，将按设定间隔自动同步"
+                            !needsBgPerm -> "系统不需要额外后台读取权限，后台同步可直接工作"
+                            bgEnabled -> "已授权后台读取健康数据，将按设定间隔自动同步"
+                            bgFeatureCheckFailed ->
+                                "后台读取能力检测失败：${backgroundReadAvailability?.errorMessage ?: "未知错误"}\n如果你是 Android 15+ 设备，可先尝试授权；实际同步时也会再次校验。"
                             bgUnavailable ->
-                                "您的设备为 Android ${Build.VERSION.RELEASE}，后台同步功能不可用\n打开 APP 时会自动同步当天数据"
+                                "当前设备或 Health Connect 版本未开放后台读取。通常需要 Android 15+ 或支持该特性的系统模块。\n打开 APP 时会自动同步当天数据"
                             else ->
                                 "后台读取权限未授权，请在 Health Connect 中开启\n当前打开 APP 时会自动同步当天数据"
                         },

@@ -68,7 +68,8 @@ dependencies {
     // OkHttp
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    // Health Connect (alpha is the only available channel for this library)
+    // Health Connect background-read APIs are available here while staying
+    // compatible with the current compileSdk / Android Gradle Plugin versions.
     implementation("androidx.health.connect:connect-client:1.1.0-beta01")
 
     // WorkManager

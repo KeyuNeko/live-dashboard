@@ -20,6 +20,7 @@ import androidx.health.connect.client.PermissionController
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.monika.dashboard.data.SettingsStore
+import com.monika.dashboard.health.BackgroundReadAvailability
 import com.monika.dashboard.health.HealthConnectManager
 import com.monika.dashboard.health.HealthDataType
 import com.monika.dashboard.health.HealthSyncWorker
@@ -37,30 +38,62 @@ fun HealthScreen(settings: SettingsStore) {
     val scope = rememberCoroutineScope()
     val enabledTypes by settings.enabledHealthTypes.collectAsState(initial = emptySet())
     val syncInterval by settings.healthSyncInterval.collectAsState(initial = 15)
+    val requestedDataPermissions = remember(enabledTypes) {
+        enabledTypes
+            .mapNotNull { key -> HealthDataType.fromKey(key)?.permission }
+            .toSet()
+            .ifEmpty { HealthDataType.entries.map { it.permission }.toSet() }
+    }
 
     // Re-check HC status on each resume (install/permission changes)
     var isAvailable by remember { mutableStateOf(HealthConnectManager.isAvailable(context)) }
     var isInstalled by remember { mutableStateOf(HealthConnectManager.isInstalled(context)) }
     var permissionsGranted by remember { mutableStateOf(false) }
+    var backgroundPermissionGranted by remember { mutableStateOf(false) }
+    var backgroundAvailability by remember { mutableStateOf<BackgroundReadAvailability?>(null) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
     // Manager is always safe to construct (client is lazy)
     val hcManager = remember(context) { HealthConnectManager(context) }
 
     // Permission launcher uses static contract (doesn't need client)
+    suspend fun refreshHealthPermissionState() {
+        isAvailable = HealthConnectManager.isAvailable(context)
+        isInstalled = HealthConnectManager.isInstalled(context)
+        if (!isAvailable) {
+            permissionsGranted = false
+            backgroundPermissionGranted = false
+            backgroundAvailability = null
+            return
+        }
+
+        try {
+            val granted = hcManager.getGrantedPermissions()
+            permissionsGranted = requestedDataPermissions.all { it in granted }
+            backgroundPermissionGranted = hcManager.backgroundReadPermission in granted
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            permissionsGranted = false
+            backgroundPermissionGranted = false
+        }
+
+        try {
+            backgroundAvailability = hcManager.getBackgroundReadAvailability()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            backgroundAvailability = null
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = PermissionController.createRequestPermissionResultContract(),
         onResult = {
             scope.launch {
-                if (isAvailable) {
-                    try {
-                        val granted = hcManager.getGrantedPermissions()
-                        permissionsGranted = hcManager.dataReadPermissions.all { it in granted }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        permissionsGranted = false
-                    }
+                refreshHealthPermissionState()
+                if (enabledTypes.isNotEmpty()) {
+                    HealthSyncWorker.schedule(context, syncInterval)
                 }
             }
         }
@@ -68,22 +101,14 @@ fun HealthScreen(settings: SettingsStore) {
 
     LaunchedEffect(lifecycleOwner) {
         lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            isAvailable = HealthConnectManager.isAvailable(context)
-            isInstalled = HealthConnectManager.isInstalled(context)
-            if (isAvailable) {
-                try {
-                    val granted = hcManager.getGrantedPermissions()
-                    permissionsGranted = hcManager.dataReadPermissions.all { it in granted }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    permissionsGranted = false
-                }
-            } else {
-                permissionsGranted = false
-            }
+            refreshHealthPermissionState()
         }
     }
+
+    val backgroundFeatureAvailable = backgroundAvailability?.isAvailable == true
+    val backgroundFeatureCheckFailed = !backgroundAvailability?.errorMessage.isNullOrEmpty()
+    val canRequestBackgroundPermission =
+        isAvailable && permissionsGranted && (backgroundFeatureAvailable || backgroundFeatureCheckFailed)
 
     Column(
         modifier = Modifier
@@ -145,11 +170,56 @@ fun HealthScreen(settings: SettingsStore) {
                 } else if (isAvailable && !permissionsGranted) {
                     OutlinedButton(
                         onClick = {
-                            permissionLauncher.launch(hcManager.dataReadPermissions)
+                            permissionLauncher.launch(requestedDataPermissions)
                         },
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("授权")
+                    }
+                }
+            }
+        }
+
+        if (isAvailable && permissionsGranted) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, Border, RoundedCornerShape(8.dp)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "后台同步",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = when {
+                            backgroundFeatureAvailable && backgroundPermissionGranted ->
+                                "后台读取权限已授权；在支持该特性的设备（通常是 Android 15+）上会按设定间隔自动同步。"
+                            backgroundFeatureAvailable ->
+                                "此设备已开放后台读取能力，但还未授权后台读取权限。再授权一次即可启用后台自动同步。"
+                            backgroundFeatureCheckFailed ->
+                                "暂时无法确认后台读取能力。如果你是 Android 15+ 设备，可尝试授权后台同步；Worker 执行时也会再次校验。"
+                            else ->
+                                "当前设备或 Health Connect 版本未开放后台读取。打开 APP 时仍会自动前台同步当天数据。"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (backgroundFeatureAvailable && backgroundPermissionGranted) Secondary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    if (!backgroundPermissionGranted && canRequestBackgroundPermission) {
+                        OutlinedButton(
+                            onClick = {
+                                permissionLauncher.launch(setOf(hcManager.backgroundReadPermission))
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(if (backgroundFeatureCheckFailed) "尝试授权后台同步" else "授权后台同步")
+                        }
                     }
                 }
             }

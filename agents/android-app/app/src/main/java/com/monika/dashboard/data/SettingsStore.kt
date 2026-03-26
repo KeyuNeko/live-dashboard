@@ -9,6 +9,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKeys
 import android.net.Uri
 import android.util.Log
+import com.monika.dashboard.service.HeartbeatWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -32,7 +33,8 @@ class SettingsStore(private val context: Context) {
     }
 
     val reportInterval: Flow<Int> = context.dataStore.data.map { prefs ->
-        prefs[Keys.REPORT_INTERVAL] ?: 60
+        (prefs[Keys.REPORT_INTERVAL] ?: HeartbeatWorker.DEFAULT_INTERVAL_SECONDS)
+            .coerceIn(HeartbeatWorker.MIN_INTERVAL_SECONDS, HeartbeatWorker.MAX_INTERVAL_SECONDS)
     }
 
     val healthSyncInterval: Flow<Int> = context.dataStore.data.map { prefs ->
@@ -57,7 +59,12 @@ class SettingsStore(private val context: Context) {
     }
 
     suspend fun setReportInterval(seconds: Int) {
-        context.dataStore.edit { it[Keys.REPORT_INTERVAL] = seconds.coerceIn(10, 300) }
+        context.dataStore.edit {
+            it[Keys.REPORT_INTERVAL] = seconds.coerceIn(
+                HeartbeatWorker.MIN_INTERVAL_SECONDS,
+                HeartbeatWorker.MAX_INTERVAL_SECONDS,
+            )
+        }
     }
 
     suspend fun setHealthSyncInterval(minutes: Int) {

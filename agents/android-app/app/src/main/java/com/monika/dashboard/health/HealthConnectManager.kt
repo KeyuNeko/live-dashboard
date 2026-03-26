@@ -12,16 +12,27 @@ import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import com.monika.dashboard.data.DebugLog
 import com.monika.dashboard.network.ReportClient
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
+
+data class BackgroundReadAvailability(
+    val isAvailable: Boolean,
+    val rawStatus: Int? = null,
+    val errorMessage: String? = null,
+)
+
+data class HealthReadResult(
+    val records: List<ReportClient.HealthRecord>,
+    val attemptedTypes: Int,
+    val deniedTypes: Int,
+) {
+    val allAttemptedTypesDenied: Boolean
+        get() = attemptedTypes > 0 && deniedTypes >= attemptedTypes && records.isEmpty()
+}
 
 class HealthConnectManager(private val context: Context) {
 
@@ -49,7 +60,10 @@ class HealthConnectManager(private val context: Context) {
     val backgroundReadPermission: String =
         HealthPermission.PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
 
-    /** Whether this device needs background read permission */
+    /**
+     * Android 14+ may expose Health Connect "additional access" permissions.
+     * Actual background-read availability is still determined at runtime.
+     */
     val needsBackgroundPermission: Boolean = Build.VERSION.SDK_INT >= 34
 
     /** Data read permissions only (no background permission) — for authorization UI */
@@ -70,34 +84,55 @@ class HealthConnectManager(private val context: Context) {
     fun createPermissionRequestContract() =
         PermissionController.createRequestPermissionResultContract()
 
-    /** Check if background read is supported at runtime (Android 15+ feature detection). */
-    suspend fun isBackgroundReadSupported(): Boolean {
+    /** Check background-read feature availability at runtime. */
+    suspend fun getBackgroundReadAvailability(): BackgroundReadAvailability {
+        if (Build.VERSION.SDK_INT < 34) {
+            return BackgroundReadAvailability(isAvailable = false)
+        }
+
         return try {
             val features = client.features
-            features.getFeatureStatus(
+            val status = features.getFeatureStatus(
                 HealthConnectFeatures.FEATURE_READ_HEALTH_DATA_IN_BACKGROUND
-            ) == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE
-        } catch (_: Exception) {
-            false
+            )
+            if (com.monika.dashboard.BuildConfig.DEBUG) {
+                Log.i(TAG, "Background read feature status=$status on API ${Build.VERSION.SDK_INT}")
+            }
+            BackgroundReadAvailability(
+                isAvailable = status == HealthConnectFeatures.FEATURE_STATUS_AVAILABLE,
+                rawStatus = status,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to query background read feature availability", e)
+            BackgroundReadAvailability(
+                isAvailable = false,
+                errorMessage = e.message ?: e.javaClass.simpleName,
+            )
         }
     }
+
+    suspend fun isBackgroundReadSupported(): Boolean =
+        getBackgroundReadAvailability().isAvailable
 
     suspend fun readRecords(
         enabledTypes: Set<String>,
         since: Instant,
         until: Instant = Instant.now()
-    ): List<ReportClient.HealthRecord> {
-        if (!since.isBefore(until)) return emptyList()
+    ): HealthReadResult {
+        if (!since.isBefore(until)) return HealthReadResult(emptyList(), attemptedTypes = 0, deniedTypes = 0)
         val timeRange = TimeRangeFilter.between(since, until)
 
         // Check permissions first, only read types with granted permissions
         val granted = getGrantedPermissions()
+        val grantedDataCount = dataReadPermissions.count { it in granted }
         if (com.monika.dashboard.BuildConfig.DEBUG) {
-            Log.i(TAG, "Granted permissions: ${granted.size}/${allReadPermissions.size}")
+            Log.i(TAG, "Granted data permissions: $grantedDataCount/${dataReadPermissions.size}")
             Log.i(TAG, "Time range: $since .. $until")
             Log.i(TAG, "Enabled types: ${enabledTypes.size}")
         }
-        DebugLog.log("健康", "已授权权限数: ${granted.size}/${allReadPermissions.size}")
+        DebugLog.log("健康", "已授权数据权限数: $grantedDataCount/${dataReadPermissions.size}")
         val permittedTypes = mutableListOf<HealthDataType>()
         val missingPerms = mutableListOf<String>()
         for (typeKey in enabledTypes) {
@@ -110,7 +145,9 @@ class HealthConnectManager(private val context: Context) {
             Log.w(TAG, "Missing permissions for: $missingPerms")
         }
         DebugLog.log("健康", "将读取 ${permittedTypes.size} 种类型")
-        if (permittedTypes.isEmpty()) return emptyList()
+        if (permittedTypes.isEmpty()) {
+            return HealthReadResult(emptyList(), attemptedTypes = 0, deniedTypes = 0)
+        }
 
         val allResults = mutableListOf<ReportClient.HealthRecord>()
         var securityDeniedCount = 0
@@ -140,13 +177,17 @@ class HealthConnectManager(private val context: Context) {
         if (securityDeniedCount > 0) {
             DebugLog.log("健康", "权限不足，跳过 $securityDeniedCount 种类型")
         }
-        return allResults
+        return HealthReadResult(
+            records = allResults,
+            attemptedTypes = permittedTypes.size,
+            deniedTypes = securityDeniedCount,
+        )
     }
 
     /** Read all records from today (local midnight to now). For foreground sync on app open. */
     suspend fun readTodayRecords(enabledTypes: Set<String>): List<ReportClient.HealthRecord> {
         val todayStart = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant()
-        return readRecords(enabledTypes, todayStart, Instant.now())
+        return readRecords(enabledTypes, todayStart, Instant.now()).records
     }
 
     private suspend fun readByType(

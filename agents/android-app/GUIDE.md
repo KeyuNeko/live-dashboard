@@ -32,17 +32,20 @@
 
 ### 健康数据同步流程
 1. 用户在 HealthScreen 授权 Health Connect 权限
-2. 选择数据类型 + 同步间隔
-3. `HealthSyncWorker` 通过 WorkManager 定时运行
-4. 从 Health Connect 读取 → POST 到 `/api/health-data`
+2. 若设备开放 `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND`（通常为 Android 15+），再额外授权后台读取权限
+3. 选择数据类型 + 同步间隔
+4. `HealthSyncWorker` 通过 WorkManager 定时运行
+5. 从 Health Connect 读取 → POST 到 `/api/health-data`
+
+> 若设备不支持后台读取，APP 仍会在打开时自动执行前台同步；不会伪装成“后台已开启”。
 
 ## 常见问题
 
 | 症状 | 原因 | 解决 |
 |------|------|------|
 | 「未连接」但服务器正常 | URL 缺少 `https://` 或 Token 为空 | 检查 SetupScreen 配置，确认已保存 |
-| 健康同步不工作 | Health Connect 未安装或权限未授权 | 安装 Health Connect，在 HealthScreen 授权 |
-| 耗电快 | 心跳间隔过低（如 10s） | 将间隔调整到 30-60s |
+| 健康同步不工作 | Health Connect 未安装、读取权限未授权、或设备未开放后台读取特性 | 安装 Health Connect，在 HealthScreen 先授权读取；若要后台同步，再确认设备支持并授权“后台同步” |
+| 耗电快 | 心跳间隔过低（如 10s） | 将间隔调整到 20-50s |
 | Token 保存失败 | EncryptedSharedPreferences 不可用（旧设备） | SetupScreen 会显示警告，无解决方案 |
 | 后台被杀 | OEM 电池优化 | StatusScreen → 忽略电池优化 + 厂商特殊设置 |
 
@@ -59,7 +62,7 @@
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `server_url` | String | `""` | 服务器地址（必须 HTTPS） |
-| `report_interval` | Int | `60` | 心跳间隔，秒（10-300） |
+| `report_interval` | Int | `30` | 心跳间隔，秒（10-50） |
 | `health_sync_interval` | Int | `15` | 健康同步间隔，分钟（15-60） |
 | `enabled_health_types` | Set\<String\> | `emptySet()` | 启用的健康数据类型 |
 | `monitoring_enabled` | Boolean | `false` | 心跳是否开启 |
