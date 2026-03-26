@@ -781,6 +781,8 @@ class TrayAgent:
         shutdown_event.set()
         if self._icon:
             self._icon.stop()
+        logging.shutdown()
+        os._exit(0)
 
     @property
     def settings_requested(self) -> bool:
