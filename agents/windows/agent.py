@@ -5,6 +5,7 @@ Monitors the foreground window and reports app usage to the dashboard backend.
 
 import ctypes
 import ctypes.wintypes
+from datetime import datetime, timezone
 import ipaddress
 import json
 import logging
@@ -289,6 +290,15 @@ def get_battery_extra() -> dict:
         return {}
 
 
+def format_report_target(app_id: str, window_title: str) -> str:
+    """Return a shared display string for tray current item and report logs."""
+    app = (app_id or "").strip() or "unknown"
+    title = (window_title or "").strip()
+    if not title or title == app:
+        return app
+    return f"{app} — {title[:80]}"
+
+
 # ---------------------------------------------------------------------------
 # Config — stored next to the exe for easy cleanup
 # ---------------------------------------------------------------------------
@@ -317,6 +327,13 @@ def load_config() -> dict:
 
     if not isinstance(cfg, dict):
         return dict(_DEFAULT_CFG)
+
+    for key in ("server_url", "token"):
+        value = cfg.get(key, _DEFAULT_CFG[key])
+        cfg[key] = value.strip() if isinstance(value, str) else _DEFAULT_CFG[key]
+
+    enable_log = cfg.get("enable_log", _DEFAULT_CFG["enable_log"])
+    cfg["enable_log"] = enable_log if isinstance(enable_log, bool) else _DEFAULT_CFG["enable_log"]
 
     for key, default, lo, hi in [
         ("interval_seconds", 5, 1, 300),
@@ -593,12 +610,16 @@ class Reporter:
         })
         self._consecutive_failures = 0
         self._current_backoff = 0
+        self._pause_until = 0.0
 
     def send(self, app_id: str, window_title: str, extra: dict | None = None) -> bool:
+        if self.pause_remaining > 0:
+            return False
+
         payload = {
             "app_id": app_id,
             "window_title": window_title[:256],
-            "timestamp": int(time.time() * 1000),
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         }
         if extra:
             payload["extra"] = extra
@@ -607,6 +628,7 @@ class Reporter:
             if resp.status_code in (200, 201, 409):
                 self._consecutive_failures = 0
                 self._current_backoff = 0
+                self._pause_until = 0.0
                 return True
             log.warning("Server %d: %s", resp.status_code, resp.text[:200])
         except requests.RequestException as e:
@@ -620,7 +642,7 @@ class Reporter:
 
         if self._consecutive_failures >= self.PAUSE_AFTER_FAILURES:
             log.warning("Failed %d times, pausing %ds", self._consecutive_failures, self.PAUSE_DURATION)
-            time.sleep(self.PAUSE_DURATION)
+            self._pause_until = time.monotonic() + self.PAUSE_DURATION
             self._consecutive_failures = 0
             self._current_backoff = 0
         return False
@@ -628,6 +650,18 @@ class Reporter:
     @property
     def backoff(self) -> float:
         return self._current_backoff
+
+    @property
+    def pause_remaining(self) -> float:
+        remaining = self._pause_until - time.monotonic()
+        if remaining <= 0:
+            self._pause_until = 0.0
+            return 0.0
+        return remaining
+
+    @property
+    def retry_delay(self) -> float:
+        return self.pause_remaining or self.backoff
 
 
 # ---------------------------------------------------------------------------
@@ -656,7 +690,7 @@ class TrayAgent:
         self._pystray = pystray
         self._lock = threading.Lock()
         self._status = "初始化中"
-        self._current_app = ""
+        self._current_target = ""
         self._icon: pystray.Icon | None = None
         self._settings_requested = False
         self._icons = {
@@ -669,7 +703,7 @@ class TrayAgent:
         p = self._pystray
         return p.Menu(
             p.MenuItem(lambda _: f"状态: {self._get_status()}", None, enabled=False),
-            p.MenuItem(lambda _: f"当前: {self._get_app() or '无'}", None, enabled=False),
+            p.MenuItem(lambda _: f"当前: {self._get_current() or '无'}", None, enabled=False),
             p.Menu.SEPARATOR,
             p.MenuItem("日志文件", self._toggle_log,
                        checked=lambda _: _file_handler is not None),
@@ -684,21 +718,23 @@ class TrayAgent:
         with self._lock:
             return self._status
 
-    def _get_app(self) -> str:
+    def _get_current(self) -> str:
         with self._lock:
-            return self._current_app
+            return self._current_target
 
-    def update_status(self, status: str, app_name: str = ""):
+    def update_status(self, status: str, current_target: str | None = None):
         with self._lock:
             self._status = status
-            self._current_app = app_name
+            if current_target is not None:
+                self._current_target = current_target
+            current_target_value = self._current_target
         if self._icon:
             color = {"在线": "green", "AFK": "orange"}.get(status, "gray")
             self._icon.icon = self._icons[color]
             # Hover tooltip — shows current app + status
             tip = "Live Dashboard"
-            if app_name:
-                tip += f"\n当前: {app_name}"
+            if current_target_value:
+                tip += f"\n当前: {current_target_value}"
             tip += f"\n{status}"
             self._icon.title = tip[:127]
 
@@ -808,8 +844,16 @@ def _monitor_loop(cfg: dict, reporter: Reporter, tray: TrayAgent | None) -> None
                 heartbeat_due = (now - last_report_time) >= heartbeat_interval
                 if heartbeat_due:
                     extra = get_battery_extra()
+                    idle_target = format_report_target("idle", "User is away")
                     if reporter.send("idle", "User is away", extra):
+                        prev_app = "idle"
+                        prev_title = "User is away"
                         last_report_time = now
+                        if tray:
+                            tray.update_status("AFK", idle_target)
+                    elif reporter.retry_delay > 0:
+                        shutdown_event.wait(reporter.retry_delay)
+                        continue
                 shutdown_event.wait(interval)
                 continue
 
@@ -820,9 +864,9 @@ def _monitor_loop(cfg: dict, reporter: Reporter, tray: TrayAgent | None) -> None
 
             app_id, title = info
 
-            # Update tray tooltip on EVERY cycle for instant feedback
+            # Keep tray status responsive; current item is updated only after a successful report.
             if tray:
-                tray.update_status("在线", app_id)
+                tray.update_status("在线")
 
             changed = app_id != prev_app or title != prev_title
             heartbeat_due = (now - last_report_time) >= heartbeat_interval
@@ -832,15 +876,18 @@ def _monitor_loop(cfg: dict, reporter: Reporter, tray: TrayAgent | None) -> None
                 music = get_music_info()
                 if music:
                     extra["music"] = music
+                reported_target = format_report_target(app_id, title)
                 success = reporter.send(app_id, title, extra)
                 if success:
                     prev_app = app_id
                     prev_title = title
                     last_report_time = now
+                    if tray:
+                        tray.update_status("在线", reported_target)
                     if changed:
-                        log.info("Reported: %s — %s", app_id, title[:80])
-                elif reporter.backoff > 0:
-                    shutdown_event.wait(reporter.backoff)
+                        log.info("Reported: %s", reported_target)
+                elif reporter.retry_delay > 0:
+                    shutdown_event.wait(reporter.retry_delay)
                     continue
 
             shutdown_event.wait(interval)
