@@ -3,6 +3,8 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+fun env(name: String): String = System.getenv(name) ?: ""
+
 android {
     namespace = "com.monika.dashboard"
     compileSdk = 36
@@ -11,13 +13,27 @@ android {
         applicationId = "com.monika.dashboard"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
+    }
+
+    signingConfigs {
+        if (env("LIVE_DASHBOARD_ANDROID_KEYSTORE").isNotBlank()) {
+            create("release") {
+                storeFile = file(env("LIVE_DASHBOARD_ANDROID_KEYSTORE"))
+                storePassword = env("LIVE_DASHBOARD_ANDROID_STORE_PASSWORD")
+                keyAlias = env("LIVE_DASHBOARD_ANDROID_KEY_ALIAS")
+                keyPassword = env("LIVE_DASHBOARD_ANDROID_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            if (signingConfigs.findByName("release") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
