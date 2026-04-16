@@ -4,6 +4,8 @@ interface DownloadLink {
   href: string;
   icon: string;
   download?: string;
+  version?: string;
+  sha256?: string;
 }
 
 const DOWNLOAD_LINKS: DownloadLink[] = [
@@ -12,6 +14,8 @@ const DOWNLOAD_LINKS: DownloadLink[] = [
     hint: "下载 .exe",
     href: "https://github.com/KeyuNeko/live-dashboard/releases/download/custom-windows-agent-20260416/live-dashboard-agent.exe",
     icon: "\u{1F5A5}",
+    version: "2026.04.16.2",
+    sha256: "426DB306E12E47DC342720BB90C0E22F6BFAC2E88D70FFD8F8BA92339162E99F",
   },
   {
     label: "Android App",
@@ -59,6 +63,15 @@ export default function ClientDownloads() {
             <span>全部发布</span>
           </a>
         </div>
+      </div>
+      <div className="mt-3 text-[10px] text-[var(--color-text-muted)] space-y-1">
+        {DOWNLOAD_LINKS.filter((item) => item.version || item.sha256).map((item) => (
+          <p key={`${item.href}-meta`}>
+            {item.label}
+            {item.version ? ` · 版本 ${item.version}` : ""}
+            {item.sha256 ? ` · SHA256 ${item.sha256.slice(0, 12)}...${item.sha256.slice(-12)}` : ""}
+          </p>
+        ))}
       </div>
     </section>
   );

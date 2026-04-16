@@ -5,8 +5,10 @@ import {
 } from "../db";
 import {
   adminEnabled,
-  getAdminSecretFromRequest,
-  verifyAdminSecret,
+  isAdminRateLimited,
+  recordAdminAuthFailure,
+  clearAdminAuthFailures,
+  verifyAdminRequest,
 } from "../middleware/auth";
 import type { EnrollmentRequestRecord } from "../types";
 
@@ -19,10 +21,14 @@ export async function handleAdminEnrollmentAction(req: Request, action: "approve
     return Response.json({ error: "Admin disabled" }, { status: 404 });
   }
 
-  const secret = getAdminSecretFromRequest(req);
-  if (!verifyAdminSecret(secret)) {
+  if (isAdminRateLimited(req)) {
+    return Response.json({ error: "Too many attempts" }, { status: 429 });
+  }
+  if (!verifyAdminRequest(req)) {
+    recordAdminAuthFailure(req);
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  clearAdminAuthFailures(req);
 
   let body: any;
   try {

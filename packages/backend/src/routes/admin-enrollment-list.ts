@@ -1,8 +1,10 @@
-import { listEnrollmentRequests } from "../db";
+import { expireOldEnrollmentRequests, listEnrollmentRequests } from "../db";
 import {
   adminEnabled,
-  getAdminSecretFromRequest,
-  verifyAdminSecret,
+  isAdminRateLimited,
+  recordAdminAuthFailure,
+  clearAdminAuthFailures,
+  verifyAdminRequest,
 } from "../middleware/auth";
 import type { EnrollmentRequestRecord } from "../types";
 
@@ -11,11 +13,16 @@ export function handleAdminEnrollmentList(req: Request): Response {
     return Response.json({ error: "Admin disabled" }, { status: 404 });
   }
 
-  const secret = getAdminSecretFromRequest(req);
-  if (!verifyAdminSecret(secret)) {
+  if (isAdminRateLimited(req)) {
+    return Response.json({ error: "Too many attempts" }, { status: 429 });
+  }
+  if (!verifyAdminRequest(req)) {
+    recordAdminAuthFailure(req);
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
+  clearAdminAuthFailures(req);
 
+  expireOldEnrollmentRequests.run();
   const rows = listEnrollmentRequests.all() as EnrollmentRequestRecord[];
   return Response.json({ requests: rows });
 }

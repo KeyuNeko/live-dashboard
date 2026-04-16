@@ -13,6 +13,8 @@ import { handleDeviceEnrollmentRequest } from "./routes/device-enrollment-reques
 import { handleDeviceEnrollmentStatus } from "./routes/device-enrollment-status";
 import { handleAdminEnrollmentList } from "./routes/admin-enrollment-list";
 import { handleAdminEnrollmentAction } from "./routes/admin-enrollment-action";
+import { handleAdminSession } from "./routes/admin-session";
+import { handleAdminDevices, handleAdminDeviceAction } from "./routes/admin-devices";
 import { injectSiteConfig } from "./services/site-config";
 
 // Start scheduled cleanup tasks (import triggers setInterval registration)
@@ -57,7 +59,7 @@ const server = Bun.serve({
     const corsHeaders: Record<string, string> = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Secret",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Secret, X-Admin-Session",
     };
 
     // Preflight
@@ -96,12 +98,26 @@ const server = Bun.serve({
         response = await handleDeviceEnrollmentRequest(req);
       } else if (pathname === "/api/device-enrollment/status" && req.method === "GET") {
         response = handleDeviceEnrollmentStatus(url);
+      } else if (pathname === "/api/admin/session" && req.method === "POST") {
+        response = await handleAdminSession(req);
       } else if (pathname === "/api/admin/enrollment-requests" && req.method === "GET") {
         response = handleAdminEnrollmentList(req);
       } else if (pathname === "/api/admin/enrollment-requests/approve" && req.method === "POST") {
         response = await handleAdminEnrollmentAction(req, "approve");
       } else if (pathname === "/api/admin/enrollment-requests/reject" && req.method === "POST") {
         response = await handleAdminEnrollmentAction(req, "reject");
+      } else if (pathname === "/api/admin/devices" && req.method === "GET") {
+        response = handleAdminDevices(req);
+      } else if (pathname === "/api/admin/devices/disable" && req.method === "POST") {
+        response = await handleAdminDeviceAction(req, "disable");
+      } else if (pathname === "/api/admin/devices/enable" && req.method === "POST") {
+        response = await handleAdminDeviceAction(req, "enable");
+      } else if (pathname === "/api/admin/devices/rotate-token" && req.method === "POST") {
+        response = await handleAdminDeviceAction(req, "rotate-token");
+      } else if (pathname === "/api/admin/devices/delete" && req.method === "POST") {
+        response = await handleAdminDeviceAction(req, "delete");
+      } else if (pathname === "/api/admin/devices/rename" && req.method === "POST") {
+        response = await handleAdminDeviceAction(req, "rename");
       } else if (!pathname.startsWith("/api/")) {
         // Static file serving disabled if directory doesn't exist
         if (!staticEnabled) {

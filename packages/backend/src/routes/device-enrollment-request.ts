@@ -21,6 +21,10 @@ export async function handleDeviceEnrollmentRequest(req: Request): Promise<Respo
   const deviceId = cleanText(body?.device_id, 64);
   const deviceName = cleanText(body?.device_name, 64);
   const platform = cleanText(body?.platform, 16) as DevicePlatform;
+  const clientVersion = cleanText(body?.client_version, 32);
+  const osVersion = cleanText(body?.os_version, 128);
+  const hostname = cleanText(body?.hostname, 128);
+  const username = cleanText(body?.username, 128);
 
   if (!deviceId) {
     return Response.json({ error: "device_id required" }, { status: 400 });
@@ -48,7 +52,18 @@ export async function handleDeviceEnrollmentRequest(req: Request): Promise<Respo
   }
 
   try {
-    const result = createEnrollmentRequest(deviceId, deviceName, platform);
+    const result = createEnrollmentRequest(deviceId, deviceName, platform, {
+      clientVersion,
+      osVersion,
+      hostname,
+      username,
+      clientIp:
+        req.headers.get("x-real-ip") ||
+        req.headers.get("cf-connecting-ip") ||
+        req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        "",
+      userAgent: req.headers.get("user-agent") || "",
+    });
     return Response.json({
       ok: true,
       status: "pending",

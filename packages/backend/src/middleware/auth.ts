@@ -3,6 +3,7 @@ import {
   getEnrollmentRequestByDeviceId,
   getDeviceTokenByDeviceId,
   getDeviceTokenByToken,
+  touchDeviceTokenUsed,
   updateDeviceTokenMetadata,
   upsertDeviceToken,
   upsertEnrollmentRequest,
@@ -19,6 +20,11 @@ const envDeviceMap = new Map<string, { token: string } & DeviceInfo>();
 const VALID_PLATFORMS = new Set<DevicePlatform>(["windows", "android", "macos"]);
 const ENROLL_SECRET = (process.env.ENROLL_SECRET || "").trim();
 const ADMIN_SECRET = (process.env.ADMIN_SECRET || "").trim();
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const ADMIN_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const ADMIN_RATE_LIMIT_MAX_FAILURES = 8;
+const adminSessions = new Map<string, number>();
+const adminFailures = new Map<string, { count: number; resetAt: number }>();
 
 function isValidPlatform(value: unknown): value is DevicePlatform {
   return typeof value === "string" && VALID_PLATFORMS.has(value as DevicePlatform);
@@ -92,7 +98,9 @@ export function authenticateRawToken(token: string): DeviceInfo | null {
   if (envDevice) return envDevice;
 
   const dbDevice = getDbTokenByToken(token);
-  return dbDevice ? toDeviceInfo(dbDevice) : null;
+  if (!dbDevice || dbDevice.enabled !== 1) return null;
+  touchDeviceTokenUsed.run(token);
+  return toDeviceInfo(dbDevice);
 }
 
 export function enrollmentEnabled(): boolean {
@@ -124,6 +132,9 @@ export function issueDeviceToken(
 
   const existing = getDbTokenByDeviceId(deviceId);
   if (existing) {
+    if (existing.enabled !== 1) {
+      upsertDeviceToken.run(existing.token, deviceId, deviceName, platform);
+    }
     if (existing.device_name !== deviceName || existing.platform !== platform) {
       updateDeviceTokenMetadata.run(deviceName, platform, deviceId);
     }
@@ -166,12 +177,19 @@ export function findExistingDeviceToken(
   }
 
   const existing = getDbTokenByDeviceId(deviceId);
-  if (!existing) return null;
+  if (!existing || existing.enabled !== 1) return null;
   return {
     token: existing.token,
     device: toDeviceInfo(existing),
     source: "db",
   };
+}
+
+export function listEnvDeviceTokens(): Array<{ token: string; device: DeviceInfo }> {
+  return Array.from(envDeviceMap.values()).map((item) => ({
+    token: item.token,
+    device: toDeviceInfo(item),
+  }));
 }
 
 export function adminEnabled(): boolean {
@@ -198,10 +216,92 @@ export function getAdminSecretFromRequest(req: Request): string {
   return match ? match[1].trim() : "";
 }
 
+export function getAdminSessionFromRequest(req: Request): string {
+  const headerValue =
+    req.headers.get("x-admin-session") ||
+    req.headers.get("x_admin_session") ||
+    "";
+  if (headerValue) return headerValue.trim();
+
+  const authHeader = req.headers.get("authorization") || "";
+  const match = authHeader.match(/^AdminSession\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+export function getRequestIdentity(req: Request): string {
+  return (
+    req.headers.get("x-real-ip") ||
+    req.headers.get("cf-connecting-ip") ||
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    "unknown"
+  );
+}
+
+export function isAdminRateLimited(req: Request): boolean {
+  const key = getRequestIdentity(req);
+  const now = Date.now();
+  const state = adminFailures.get(key);
+  if (!state || state.resetAt <= now) {
+    adminFailures.delete(key);
+    return false;
+  }
+  return state.count >= ADMIN_RATE_LIMIT_MAX_FAILURES;
+}
+
+export function recordAdminAuthFailure(req: Request): void {
+  const key = getRequestIdentity(req);
+  const now = Date.now();
+  const state = adminFailures.get(key);
+  if (!state || state.resetAt <= now) {
+    adminFailures.set(key, { count: 1, resetAt: now + ADMIN_RATE_LIMIT_WINDOW_MS });
+    return;
+  }
+  state.count += 1;
+}
+
+export function clearAdminAuthFailures(req: Request): void {
+  adminFailures.delete(getRequestIdentity(req));
+}
+
+export function createAdminSession(): { session: string; expiresAt: string } {
+  const session = randomBytes(24).toString("hex");
+  const expiresAtMs = Date.now() + ADMIN_SESSION_TTL_MS;
+  adminSessions.set(session, expiresAtMs);
+  return { session, expiresAt: new Date(expiresAtMs).toISOString() };
+}
+
+export function verifyAdminSession(session: string): boolean {
+  if (!session) return false;
+  const expiresAt = adminSessions.get(session);
+  if (!expiresAt) return false;
+  if (expiresAt <= Date.now()) {
+    adminSessions.delete(session);
+    return false;
+  }
+  return true;
+}
+
+export function verifyAdminRequest(req: Request): boolean {
+  const session = getAdminSessionFromRequest(req);
+  if (verifyAdminSession(session)) return true;
+
+  const secret = getAdminSecretFromRequest(req);
+  if (verifyAdminSecret(secret)) return true;
+  return false;
+}
+
 export function createEnrollmentRequest(
   deviceId: string,
   deviceName: string,
   platform: DevicePlatform,
+  metadata: {
+    clientVersion?: string;
+    osVersion?: string;
+    hostname?: string;
+    username?: string;
+    clientIp?: string;
+    userAgent?: string;
+  } = {},
 ): { requestKey: string; reused: boolean } {
   const existing = getDbEnrollmentRequestByDeviceId(deviceId);
   const reused =
@@ -210,6 +310,17 @@ export function createEnrollmentRequest(
     existing.device_name === deviceName &&
     existing.platform === platform;
   const requestKey = reused ? existing.request_key : randomBytes(12).toString("hex");
-  upsertEnrollmentRequest.run(requestKey, deviceId, deviceName, platform);
+  upsertEnrollmentRequest.run(
+    requestKey,
+    deviceId,
+    deviceName,
+    platform,
+    metadata.clientVersion || "",
+    metadata.osVersion || "",
+    metadata.hostname || "",
+    metadata.username || "",
+    metadata.clientIp || "",
+    metadata.userAgent || "",
+  );
   return { requestKey, reused };
 }

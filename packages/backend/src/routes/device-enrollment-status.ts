@@ -1,4 +1,4 @@
-import { getEnrollmentRequestByRequestKey } from "../db";
+import { expireOldEnrollmentRequests, getEnrollmentRequestByRequestKey } from "../db";
 import { issueDeviceToken } from "../middleware/auth";
 import type { EnrollmentRequestRecord } from "../types";
 
@@ -8,6 +8,7 @@ export function handleDeviceEnrollmentStatus(url: URL): Response {
     return Response.json({ error: "request_key required" }, { status: 400 });
   }
 
+  expireOldEnrollmentRequests.run();
   const request = getEnrollmentRequestByRequestKey.get(requestKey) as EnrollmentRequestRecord | null;
   if (!request) {
     return Response.json({ error: "Request not found" }, { status: 404 });

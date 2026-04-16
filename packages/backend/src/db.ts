@@ -67,6 +67,9 @@ db.run(`
     device_id TEXT NOT NULL UNIQUE,
     device_name TEXT NOT NULL,
     platform TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    revoked_at TEXT NOT NULL DEFAULT '',
+    last_used_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   )
@@ -81,6 +84,13 @@ db.run(`
     platform TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     admin_note TEXT NOT NULL DEFAULT '',
+    client_version TEXT NOT NULL DEFAULT '',
+    os_version TEXT NOT NULL DEFAULT '',
+    hostname TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
+    client_ip TEXT NOT NULL DEFAULT '',
+    user_agent TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     approved_at TEXT NOT NULL DEFAULT '',
@@ -113,6 +123,32 @@ if (!columnExists("device_states", "display_title")) {
 // device_states.extra (JSON string for battery, etc.)
 if (!columnExists("device_states", "extra")) {
   db.run("ALTER TABLE device_states ADD COLUMN extra TEXT DEFAULT '{}'");
+}
+
+// device_tokens management columns
+for (const [column, definition] of [
+  ["enabled", "INTEGER NOT NULL DEFAULT 1"],
+  ["revoked_at", "TEXT NOT NULL DEFAULT ''"],
+  ["last_used_at", "TEXT NOT NULL DEFAULT ''"],
+] as const) {
+  if (!columnExists("device_tokens", column)) {
+    db.run(`ALTER TABLE device_tokens ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+// device_enrollment_requests metadata columns
+for (const [column, definition] of [
+  ["client_version", "TEXT NOT NULL DEFAULT ''"],
+  ["os_version", "TEXT NOT NULL DEFAULT ''"],
+  ["hostname", "TEXT NOT NULL DEFAULT ''"],
+  ["username", "TEXT NOT NULL DEFAULT ''"],
+  ["client_ip", "TEXT NOT NULL DEFAULT ''"],
+  ["user_agent", "TEXT NOT NULL DEFAULT ''"],
+  ["expires_at", "TEXT NOT NULL DEFAULT ''"],
+] as const) {
+  if (!columnExists("device_enrollment_requests", column)) {
+    db.run(`ALTER TABLE device_enrollment_requests ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 // ── Health records table ──
@@ -210,26 +246,28 @@ export const cleanupOldActivities = db.prepare(`
 `);
 
 export const getDeviceTokenByToken = db.prepare(`
-  SELECT token, device_id, device_name, platform, created_at, updated_at
+  SELECT token, device_id, device_name, platform, enabled, revoked_at, last_used_at, created_at, updated_at
   FROM device_tokens
   WHERE token = ?
   LIMIT 1
 `);
 
 export const getDeviceTokenByDeviceId = db.prepare(`
-  SELECT token, device_id, device_name, platform, created_at, updated_at
+  SELECT token, device_id, device_name, platform, enabled, revoked_at, last_used_at, created_at, updated_at
   FROM device_tokens
   WHERE device_id = ?
   LIMIT 1
 `);
 
 export const upsertDeviceToken = db.prepare(`
-  INSERT INTO device_tokens (token, device_id, device_name, platform)
-  VALUES (?, ?, ?, ?)
+  INSERT INTO device_tokens (token, device_id, device_name, platform, enabled, revoked_at)
+  VALUES (?, ?, ?, ?, 1, '')
   ON CONFLICT(device_id) DO UPDATE SET
     token = excluded.token,
     device_name = excluded.device_name,
     platform = excluded.platform,
+    enabled = 1,
+    revoked_at = '',
     updated_at = datetime('now')
 `);
 
@@ -239,36 +277,95 @@ export const updateDeviceTokenMetadata = db.prepare(`
   WHERE device_id = ?
 `);
 
+export const touchDeviceTokenUsed = db.prepare(`
+  UPDATE device_tokens
+  SET last_used_at = datetime('now')
+  WHERE token = ?
+`);
+
+export const listDeviceTokens = db.prepare(`
+  SELECT
+    dt.token,
+    dt.device_id,
+    dt.device_name,
+    dt.platform,
+    dt.enabled,
+    dt.revoked_at,
+    dt.last_used_at,
+    dt.created_at,
+    dt.updated_at,
+    COALESCE(ds.last_seen_at, '') AS last_seen_at,
+    COALESCE(ds.is_online, 0) AS is_online
+  FROM device_tokens dt
+  LEFT JOIN device_states ds ON ds.device_id = dt.device_id
+  ORDER BY datetime(COALESCE(NULLIF(dt.last_used_at, ''), dt.updated_at)) DESC
+`);
+
+export const setDeviceTokenEnabled = db.prepare(`
+  UPDATE device_tokens
+  SET enabled = ?, revoked_at = CASE WHEN ? = 1 THEN '' ELSE datetime('now') END, updated_at = datetime('now')
+  WHERE device_id = ?
+`);
+
+export const rotateDeviceToken = db.prepare(`
+  UPDATE device_tokens
+  SET token = ?, enabled = 1, revoked_at = '', updated_at = datetime('now')
+  WHERE device_id = ?
+`);
+
+export const deleteDeviceToken = db.prepare(`
+  DELETE FROM device_tokens WHERE device_id = ?
+`);
+
+export const renameDeviceToken = db.prepare(`
+  UPDATE device_tokens
+  SET device_name = ?, updated_at = datetime('now')
+  WHERE device_id = ?
+`);
+
+export const renameDeviceState = db.prepare(`
+  UPDATE device_states
+  SET device_name = ?
+  WHERE device_id = ?
+`);
+
 export const getEnrollmentRequestByRequestKey = db.prepare(`
-  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, client_version, os_version, hostname, username, client_ip, user_agent, expires_at, created_at, updated_at, approved_at, rejected_at
   FROM device_enrollment_requests
   WHERE request_key = ?
   LIMIT 1
 `);
 
 export const getEnrollmentRequestByDeviceId = db.prepare(`
-  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, client_version, os_version, hostname, username, client_ip, user_agent, expires_at, created_at, updated_at, approved_at, rejected_at
   FROM device_enrollment_requests
   WHERE device_id = ?
   LIMIT 1
 `);
 
 export const getEnrollmentRequestById = db.prepare(`
-  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, client_version, os_version, hostname, username, client_ip, user_agent, expires_at, created_at, updated_at, approved_at, rejected_at
   FROM device_enrollment_requests
   WHERE id = ?
   LIMIT 1
 `);
 
 export const upsertEnrollmentRequest = db.prepare(`
-  INSERT INTO device_enrollment_requests (request_key, device_id, device_name, platform, status, admin_note, approved_at, rejected_at)
-  VALUES (?, ?, ?, ?, 'pending', '', '', '')
+  INSERT INTO device_enrollment_requests (request_key, device_id, device_name, platform, status, admin_note, client_version, os_version, hostname, username, client_ip, user_agent, expires_at, approved_at, rejected_at)
+  VALUES (?, ?, ?, ?, 'pending', '', ?, ?, ?, ?, ?, ?, datetime('now', '+24 hours'), '', '')
   ON CONFLICT(device_id) DO UPDATE SET
     request_key = excluded.request_key,
     device_name = excluded.device_name,
     platform = excluded.platform,
     status = 'pending',
     admin_note = '',
+    client_version = excluded.client_version,
+    os_version = excluded.os_version,
+    hostname = excluded.hostname,
+    username = excluded.username,
+    client_ip = excluded.client_ip,
+    user_agent = excluded.user_agent,
+    expires_at = datetime('now', '+24 hours'),
     approved_at = '',
     rejected_at = '',
     updated_at = datetime('now')
@@ -295,8 +392,9 @@ export const rejectEnrollmentRequest = db.prepare(`
 `);
 
 export const listEnrollmentRequests = db.prepare(`
-  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, client_version, os_version, hostname, username, client_ip, user_agent, expires_at, created_at, updated_at, approved_at, rejected_at
   FROM device_enrollment_requests
+  WHERE NOT (status = 'rejected' AND datetime(updated_at) < datetime('now', '-7 days'))
   ORDER BY
     CASE status
       WHEN 'pending' THEN 0
@@ -305,6 +403,17 @@ export const listEnrollmentRequests = db.prepare(`
     END,
     datetime(updated_at) DESC
   LIMIT 100
+`);
+
+export const expireOldEnrollmentRequests = db.prepare(`
+  UPDATE device_enrollment_requests
+  SET status = 'rejected',
+    admin_note = CASE WHEN admin_note = '' THEN 'Request expired' ELSE admin_note END,
+    rejected_at = datetime('now'),
+    updated_at = datetime('now')
+  WHERE status = 'pending'
+    AND expires_at != ''
+    AND datetime(expires_at) < datetime('now')
 `);
 
 export default db;

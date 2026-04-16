@@ -92,10 +92,32 @@ export interface EnrollmentRequestRecord {
   platform: string;
   status: "pending" | "approved" | "rejected";
   admin_note: string;
+  client_version: string;
+  os_version: string;
+  hostname: string;
+  username: string;
+  client_ip: string;
+  user_agent: string;
+  expires_at: string;
   created_at: string;
   updated_at: string;
   approved_at: string;
   rejected_at: string;
+}
+
+export interface AdminDeviceRecord {
+  token: string;
+  device_id: string;
+  device_name: string;
+  platform: string;
+  source: "env" | "db";
+  enabled: number;
+  revoked_at: string;
+  last_used_at: string;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+  is_online: number;
 }
 
 // Site config
@@ -161,13 +183,13 @@ export async function fetchHealthData(date: string, signal?: AbortSignal, device
 }
 
 export async function fetchEnrollmentRequests(
-  adminSecret: string,
+  adminSession: string,
   signal?: AbortSignal,
 ): Promise<EnrollmentRequestRecord[]> {
   const res = await fetch(`${API_BASE}/api/admin/enrollment-requests`, {
     signal,
     headers: {
-      "X-Admin-Secret": adminSecret,
+      "X-Admin-Session": adminSession,
     },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -176,7 +198,7 @@ export async function fetchEnrollmentRequests(
 }
 
 export async function decideEnrollmentRequest(
-  adminSecret: string,
+  adminSession: string,
   action: "approve" | "reject",
   id: number,
   adminNote: string,
@@ -185,7 +207,7 @@ export async function decideEnrollmentRequest(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Admin-Secret": adminSecret,
+      "X-Admin-Session": adminSession,
     },
     body: JSON.stringify({
       id,
@@ -195,4 +217,48 @@ export async function decideEnrollmentRequest(
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json();
   return data.request;
+}
+
+export async function createAdminSession(adminSecret: string): Promise<{ session: string; expires_at: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ admin_secret: adminSecret }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return { session: data.session, expires_at: data.expiresAt };
+}
+
+export async function fetchAdminDevices(adminSession: string, signal?: AbortSignal): Promise<AdminDeviceRecord[]> {
+  const res = await fetch(`${API_BASE}/api/admin/devices`, {
+    signal,
+    headers: { "X-Admin-Session": adminSession },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data.devices) ? data.devices : [];
+}
+
+export async function adminDeviceAction(
+  adminSession: string,
+  action: "disable" | "enable" | "rotate-token" | "delete" | "rename",
+  deviceId: string,
+  deviceName?: string,
+  source?: "env" | "db",
+): Promise<{ ok: boolean; token?: string }> {
+  const res = await fetch(`${API_BASE}/api/admin/devices/${action}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Session": adminSession,
+    },
+    body: JSON.stringify({
+      device_id: deviceId,
+      device_name: deviceName,
+      source,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }

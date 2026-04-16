@@ -8,6 +8,9 @@ export interface DeviceInfo {
 
 export interface DeviceTokenRecord extends DeviceInfo {
   token: string;
+  enabled: number;
+  revoked_at: string;
+  last_used_at: string;
   created_at: string;
   updated_at: string;
 }
@@ -19,10 +22,29 @@ export interface EnrollmentRequestRecord extends DeviceInfo {
   request_key: string;
   status: EnrollmentRequestStatus;
   admin_note: string;
+  client_version: string;
+  os_version: string;
+  hostname: string;
+  username: string;
+  client_ip: string;
+  user_agent: string;
+  expires_at: string;
   created_at: string;
   updated_at: string;
   approved_at: string;
   rejected_at: string;
+}
+
+export interface AdminDeviceRecord extends DeviceInfo {
+  token: string;
+  source: "env" | "db";
+  enabled: number;
+  revoked_at: string;
+  last_used_at: string;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+  is_online: number;
 }
 
 export interface ReportPayload {
