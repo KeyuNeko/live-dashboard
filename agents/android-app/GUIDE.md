@@ -1,6 +1,6 @@
 # Live Dashboard Android App — 代码指南
 
-> 更新：2026-03-22
+> 更新：2026-04-16
 
 ## 构建与部署
 
@@ -30,6 +30,14 @@
 2. 每 5 秒创建临时 `ReportClient`，调用 `testConnection()`（GET `/api/health`）
 3. 更新状态 → TopAppBar 显示「已连接」(绿) 或「未连接」(灰)
 
+### 审批接入流程
+1. 用户在 `SetupScreen` 填写 `server_url`、`device_id`、`device_name`
+2. 点击「提交接入申请」→ `ReportClient.requestEnrollment()`
+3. 服务端创建待审批申请，返回 `request_key`
+4. 管理员在 `/admin` 审批
+5. 用户点击「检查审批状态」→ `ReportClient.checkEnrollmentStatus()`
+6. 审批通过后自动保存 token
+
 ### 健康数据同步流程
 1. 用户在 HealthScreen 授权 Health Connect 权限
 2. 若设备开放 `FEATURE_READ_HEALTH_DATA_IN_BACKGROUND`（以设备与 Health Connect 的 feature 检测结果为准），再额外授权后台读取权限
@@ -56,6 +64,8 @@
 | POST | `/api/report` | 心跳上报（电量 + 在线状态） | HeartbeatWorker |
 | POST | `/api/health-data` | 上传健康数据记录 | HealthSyncWorker |
 | GET | `/api/health` | 连接测试 | MainActivity |
+| POST | `/api/device-enrollment/request` | 提交接入申请 | SetupScreen |
+| GET | `/api/device-enrollment/status` | 查询审批状态 | SetupScreen |
 
 ## DataStore 配置键
 
@@ -66,4 +76,7 @@
 | `health_sync_interval` | Int | `15` | 健康同步间隔，分钟（15-60） |
 | `enabled_health_types` | Set\<String\> | `emptySet()` | 启用的健康数据类型 |
 | `monitoring_enabled` | Boolean | `false` | 心跳是否开启 |
+| `device_id` | String | 自动生成 | 设备唯一标识 |
+| `device_name` | String | 设备型号 | 设备显示名称 |
+| `pending_request_key` | String | `""` | 待审批申请编号 |
 | `token`（加密） | String | `null` | 认证令牌（AES256-GCM） |
