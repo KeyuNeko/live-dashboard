@@ -14,6 +14,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.monika.dashboard.data.SettingsStore
+import com.monika.dashboard.network.ReportClient
 import com.monika.dashboard.service.HeartbeatWorker
 import com.monika.dashboard.ui.theme.Primary
 import kotlinx.coroutines.Dispatchers
@@ -30,9 +31,15 @@ fun SetupScreen(settings: SettingsStore) {
     val serverUrl by settings.serverUrl.collectAsState(initial = "")
     val reportInterval by settings.reportInterval.collectAsState(initial = HeartbeatWorker.DEFAULT_INTERVAL_SECONDS)
     val monitoringEnabled by settings.monitoringEnabled.collectAsState(initial = false)
+    val deviceId by settings.deviceId.collectAsState(initial = SettingsStore.defaultDeviceId(context))
+    val deviceName by settings.deviceName.collectAsState(initial = android.os.Build.MODEL.orEmpty().ifBlank { "Android" })
+    val pendingRequestKey by settings.pendingRequestKey.collectAsState(initial = "")
 
     var urlInput by remember(serverUrl) { mutableStateOf(serverUrl) }
     var tokenInput by remember { mutableStateOf("") }
+    var deviceIdInput by remember(deviceId) { mutableStateOf(deviceId) }
+    var deviceNameInput by remember(deviceName) { mutableStateOf(deviceName) }
+    var requestKeyInput by remember(pendingRequestKey) { mutableStateOf(pendingRequestKey) }
     var intervalInput by remember(reportInterval) { mutableStateOf(reportInterval.toString()) }
 
     // Load token asynchronously to avoid blocking main thread
@@ -96,6 +103,34 @@ fun SetupScreen(settings: SettingsStore) {
             shape = RoundedCornerShape(8.dp)
         )
 
+        OutlinedTextField(
+            value = deviceIdInput,
+            onValueChange = { deviceIdInput = it },
+            label = { Text("设备 ID") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp)
+        )
+
+        OutlinedTextField(
+            value = deviceNameInput,
+            onValueChange = { deviceNameInput = it },
+            label = { Text("设备名称") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp)
+        )
+
+        OutlinedTextField(
+            value = requestKeyInput,
+            onValueChange = { requestKeyInput = it },
+            label = { Text("申请编号") },
+            supportingText = { Text("提交接入申请后自动生成，管理员批准后可检查状态领取 Token") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp)
+        )
+
         // Report Interval
         OutlinedTextField(
             value = intervalInput,
@@ -127,6 +162,9 @@ fun SetupScreen(settings: SettingsStore) {
                     }
                     settings.setServerUrl(url)
                     settings.setToken(tokenInput)
+                    settings.setDeviceId(deviceIdInput)
+                    settings.setDeviceName(deviceNameInput)
+                    settings.setPendingRequestKey(requestKeyInput)
                     val seconds = intervalInput.toIntOrNull()?.coerceIn(
                         HeartbeatWorker.MIN_INTERVAL_SECONDS,
                         HeartbeatWorker.MAX_INTERVAL_SECONDS,
@@ -146,6 +184,96 @@ fun SetupScreen(settings: SettingsStore) {
             colors = ButtonDefaults.buttonColors(containerColor = Primary)
         ) {
             Text("保存设置")
+        }
+
+        Button(
+            onClick = {
+                scope.launch {
+                    val url = urlInput.trim()
+                    if (!SettingsStore.validateUrl(url)) {
+                        urlError = "地址无效：必须使用 HTTPS 或 http://localhost"
+                        return@launch
+                    }
+                    val did = deviceIdInput.trim()
+                    val dname = deviceNameInput.trim()
+                    if (did.isBlank() || dname.isBlank()) {
+                        statusMsg = "设备 ID 和设备名称不能为空"
+                        return@launch
+                    }
+                    val result = withContext(Dispatchers.IO) {
+                        ReportClient(url, tokenInput).requestEnrollment(
+                            did,
+                            dname,
+                            "android-app",
+                            "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} / Android ${android.os.Build.VERSION.RELEASE}"
+                        )
+                    }
+                    result.fold(
+                        onSuccess = {
+                            if (it.status == "approved" && it.token != null) {
+                                settings.setToken(it.token)
+                                tokenInput = it.token
+                                requestKeyInput = ""
+                                settings.setPendingRequestKey("")
+                                statusMsg = "设备已批准，Token 已保存"
+                            } else if (it.status == "pending" && it.requestKey != null) {
+                                requestKeyInput = it.requestKey
+                                settings.setPendingRequestKey(it.requestKey)
+                                statusMsg = "接入申请已提交，等待管理员审批"
+                            } else {
+                                statusMsg = "服务端返回未知状态：${it.status}"
+                            }
+                        },
+                        onFailure = { statusMsg = "提交失败：${it.message}" }
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text("提交接入申请")
+        }
+
+        Button(
+            onClick = {
+                scope.launch {
+                    val url = urlInput.trim()
+                    val requestKey = requestKeyInput.trim()
+                    if (!SettingsStore.validateUrl(url)) {
+                        urlError = "地址无效：必须使用 HTTPS 或 http://localhost"
+                        return@launch
+                    }
+                    if (requestKey.isBlank()) {
+                        statusMsg = "申请编号不能为空"
+                        return@launch
+                    }
+                    val result = withContext(Dispatchers.IO) {
+                        ReportClient(url, tokenInput).checkEnrollmentStatus(requestKey)
+                    }
+                    result.fold(
+                        onSuccess = {
+                            if (it.status == "approved" && it.token != null) {
+                                settings.setToken(it.token)
+                                tokenInput = it.token
+                                requestKeyInput = ""
+                                settings.setPendingRequestKey("")
+                                statusMsg = "审批通过，Token 已保存"
+                            } else if (it.status == "rejected") {
+                                requestKeyInput = ""
+                                settings.setPendingRequestKey("")
+                                statusMsg = "审批未通过：${it.message}"
+                            } else {
+                                statusMsg = "仍在等待管理员审批"
+                            }
+                        },
+                        onFailure = { statusMsg = "检查失败：${it.message}" }
+                    )
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text("检查审批状态")
         }
 
         // Start/Stop monitoring toggle

@@ -35,6 +35,45 @@ class ReportClient(
 
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
 
+    fun requestEnrollment(
+        deviceId: String,
+        deviceName: String,
+        clientVersion: String,
+        osVersion: String
+    ): Result<EnrollmentResult> {
+        val body = JSONObject().apply {
+            put("device_id", deviceId)
+            put("device_name", deviceName)
+            put("platform", "android")
+            put("client_version", clientVersion)
+            put("os_version", osVersion)
+            put("hostname", android.os.Build.MODEL ?: "")
+            put("username", "")
+        }
+        return enrollmentPost("${serverUrl.trimEnd('/')}/api/device-enrollment/request", body)
+    }
+
+    fun checkEnrollmentStatus(requestKey: String): Result<EnrollmentResult> {
+        val request = Request.Builder()
+            .url("${serverUrl.trimEnd('/')}/api/device-enrollment/status?request_key=$requestKey")
+            .get()
+            .build()
+
+        return try {
+            val response = client.newCall(request).execute()
+            response.use {
+                val body = it.body?.string().orEmpty()
+                if (!it.isSuccessful) {
+                    Result.failure(IOException("HTTP ${it.code}: $body"))
+                } else {
+                    Result.success(parseEnrollmentResult(JSONObject(body)))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     fun reportApp(
         appId: String,
         windowTitle: String,
@@ -126,6 +165,37 @@ class ReportClient(
         }
     }
 
+    private fun enrollmentPost(url: String, body: JSONObject): Result<EnrollmentResult> {
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Content-Type", "application/json")
+            .post(body.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        return try {
+            val response = client.newCall(request).execute()
+            response.use {
+                val responseBody = it.body?.string().orEmpty()
+                if (!it.isSuccessful) {
+                    Result.failure(IOException("HTTP ${it.code}: $responseBody"))
+                } else {
+                    Result.success(parseEnrollmentResult(JSONObject(responseBody)))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    private fun parseEnrollmentResult(json: JSONObject): EnrollmentResult {
+        return EnrollmentResult(
+            status = json.optString("status"),
+            token = json.optString("token").ifBlank { null },
+            requestKey = json.optString("request_key").ifBlank { null },
+            message = json.optString("message").ifBlank { json.optString("admin_note") }
+        )
+    }
+
     fun shutdown() {
         client.dispatcher.executorService.shutdown()
         client.connectionPool.evictAll()
@@ -137,5 +207,12 @@ class ReportClient(
         val unit: String,
         val timestamp: String,
         val endTime: String? = null
+    )
+
+    data class EnrollmentResult(
+        val status: String,
+        val token: String?,
+        val requestKey: String?,
+        val message: String
     )
 }

@@ -26,6 +26,9 @@ class SettingsStore(private val context: Context) {
         val ENABLED_HEALTH_TYPES = stringSetPreferencesKey("enabled_health_types")
         val MONITORING_ENABLED = booleanPreferencesKey("monitoring_enabled")
         val LAST_SYNC_TIMESTAMP = longPreferencesKey("last_sync_timestamp")
+        val DEVICE_ID = stringPreferencesKey("device_id")
+        val DEVICE_NAME = stringPreferencesKey("device_name")
+        val PENDING_REQUEST_KEY = stringPreferencesKey("pending_request_key")
     }
 
     val serverUrl: Flow<String> = context.dataStore.data.map { prefs ->
@@ -53,6 +56,18 @@ class SettingsStore(private val context: Context) {
         prefs[Keys.LAST_SYNC_TIMESTAMP] ?: 0L
     }
 
+    val deviceId: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.DEVICE_ID] ?: defaultDeviceId(context)
+    }
+
+    val deviceName: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.DEVICE_NAME] ?: android.os.Build.MODEL.orEmpty().ifBlank { "Android" }
+    }
+
+    val pendingRequestKey: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.PENDING_REQUEST_KEY] ?: ""
+    }
+
     suspend fun setServerUrl(url: String) {
         require(validateUrl(url)) { "Invalid URL: must be HTTPS or http://localhost" }
         context.dataStore.edit { it[Keys.SERVER_URL] = url.trim() }
@@ -77,6 +92,18 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setMonitoringEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.MONITORING_ENABLED] = enabled }
+    }
+
+    suspend fun setDeviceId(value: String) {
+        context.dataStore.edit { it[Keys.DEVICE_ID] = value.trim() }
+    }
+
+    suspend fun setDeviceName(value: String) {
+        context.dataStore.edit { it[Keys.DEVICE_NAME] = value.trim() }
+    }
+
+    suspend fun setPendingRequestKey(value: String) {
+        context.dataStore.edit { it[Keys.PENDING_REQUEST_KEY] = value.trim() }
     }
 
     /** Update last sync timestamp with compare-and-set (only advances forward). */
@@ -120,6 +147,18 @@ class SettingsStore(private val context: Context) {
     }
 
     companion object {
+        fun defaultDeviceId(context: Context): String {
+            val raw = android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID
+            ) ?: android.os.Build.MODEL.orEmpty()
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(raw.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+                .take(12)
+            return "android-$digest"
+        }
+
         fun maskToken(token: String): String {
             if (token.length <= 4) return "****"
             return token.take(4) + "***"
