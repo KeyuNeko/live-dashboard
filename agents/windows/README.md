@@ -4,24 +4,40 @@
 
 ## 快速开始
 
-从 [GitHub Releases](https://github.com/Monika-Dream/live-dashboard/releases) 下载 `live-dashboard-agent.exe`，将 `config.json` 放在同目录下，双击运行即可。
+从 [GitHub Releases](https://github.com/Monika-Dream/live-dashboard/releases) 下载 `live-dashboard-agent.exe`，双击运行即可。
+
+首次启动会弹出设置窗口，配置会保存到：
+
+```txt
+%LOCALAPPDATA%\LiveDashboardAgent\config.json
+```
+
+如果服务端启用了 `ENROLL_SECRET`，设置窗口可以直接填写：
+
+- 服务器地址
+- 设备 ID
+- 设备名称
+- 注册密钥
+
+然后点击“申请 Token”，客户端会向服务端注册并自动回填 token。
 
 ## 从源码运行
 
-**需要**: Python 3.10+
+**需要**: Python 3.8+
 
 1. 安装依赖：
    ```bash
    pip install -r requirements.txt
    ```
-2. 复制 `config.example.json` 为 `config.json`，填入你的信息：
+2. 将 `config.example.json` 的内容保存到 `%LOCALAPPDATA%\LiveDashboardAgent\config.json`，填入你的信息：
    ```json
    {
      "server_url": "https://your-domain.com",
      "token": "你的设备密钥",
      "interval_seconds": 5,
      "heartbeat_seconds": 60,
-     "idle_threshold_seconds": 300
+     "idle_threshold_seconds": 300,
+     "enable_log": false
    }
    ```
 3. 运行：
@@ -33,11 +49,15 @@
 
 运行 `build.bat`，会用 PyInstaller 打包为单文件 `dist/live-dashboard-agent.exe`。
 
-将 `config.json` 放在 `.exe` 同目录下即可运行。
+`.exe` 不需要外置 `config.json`。首次启动可直接弹出设置窗口，或者手动写入：
+
+```txt
+%LOCALAPPDATA%\LiveDashboardAgent\config.json
+```
 
 ## 开机自启
 
-将 `.exe` 和 `config.json` 放在固定目录后，以管理员身份运行 `install-task.bat`，会创建 Windows 任务计划在登录时自动启动。
+将 `.exe` 放在固定目录后，以管理员身份运行 `install-task.bat`，会创建 Windows 任务计划在登录时自动启动。
 
 新版也支持在托盘右键菜单中直接切换“开机自启”。菜单默认写入当前用户的登录启动项；如果检测到旧版任务计划，关闭时会一并尝试移除。
 
@@ -50,6 +70,7 @@
 | `interval_seconds` | 上报间隔（秒） | `5` |
 | `heartbeat_seconds` | AFK 时心跳间隔（秒） | `60` |
 | `idle_threshold_seconds` | 无操作多久后进入 AFK 模式（秒） | `300` |
+| `enable_log` | 是否写入日志文件 | `false` |
 
 ## 功能
 
@@ -88,7 +109,13 @@
 
 ### 日志
 
-运行日志自动写入 `live-dashboard-agent.log`，按天轮转保留 2 天。
+运行日志自动写入：
+
+```txt
+%LOCALAPPDATA%\LiveDashboardAgent\logs\agent.log
+```
+
+按天轮转保留 2 天。托盘菜单支持直接打开数据目录。
 
 ## 技术栈
 

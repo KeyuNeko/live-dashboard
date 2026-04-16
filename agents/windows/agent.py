@@ -11,6 +11,8 @@ import json
 import logging
 import logging.handlers
 import os
+import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -18,6 +20,7 @@ import threading
 import time
 import urllib.parse
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 import psutil
 import requests
@@ -27,11 +30,27 @@ if getattr(sys, "frozen", False):
 else:
     base_dir = Path(__file__).parent
 
-# ---------------------------------------------------------------------------
-# Logging — console always; file handler toggleable (2-day rotation)
-# ---------------------------------------------------------------------------
-LOG_FILE = base_dir / "agent.log"
-_file_handler: logging.Handler | None = None
+
+APP_DIR_NAME = "LiveDashboardAgent"
+
+
+def get_app_data_dir() -> Path:
+    """Return the per-user data directory used for config/log files."""
+    local_appdata = os.getenv("LOCALAPPDATA")
+    if local_appdata:
+        return Path(local_appdata) / APP_DIR_NAME
+    appdata = os.getenv("APPDATA")
+    if appdata:
+        return Path(appdata) / APP_DIR_NAME
+    return Path.home() / f".{APP_DIR_NAME}"
+
+
+APP_DATA_DIR = get_app_data_dir()
+LOG_DIR = APP_DATA_DIR / "logs"
+LOG_FILE = LOG_DIR / "agent.log"
+CONFIG_PATH = APP_DATA_DIR / "config.json"
+LEGACY_LOG_FILE = base_dir / "agent.log"
+LEGACY_CONFIG_PATH = base_dir / "config.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,10 +60,40 @@ logging.basicConfig(
 log = logging.getLogger("agent")
 
 
+def ensure_app_dirs() -> None:
+    """Create the app data directories when missing."""
+    APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def migrate_legacy_files() -> None:
+    """Move old portable config/log files next to the exe into AppData once."""
+    ensure_app_dirs()
+
+    if LEGACY_CONFIG_PATH.exists() and not CONFIG_PATH.exists():
+        try:
+            shutil.move(str(LEGACY_CONFIG_PATH), str(CONFIG_PATH))
+        except Exception as e:
+            log.warning("Legacy config migration failed: %s", e)
+
+    if LEGACY_LOG_FILE.exists() and not LOG_FILE.exists():
+        try:
+            shutil.move(str(LEGACY_LOG_FILE), str(LOG_FILE))
+        except Exception as e:
+            log.warning("Legacy log migration failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# Logging — console always; file handler toggleable (2-day rotation)
+# ---------------------------------------------------------------------------
+_file_handler: Optional[logging.Handler] = None
+
+
 def set_file_logging(enabled: bool) -> None:
     """Toggle file logging with 2-day rotation."""
     global _file_handler
     if enabled and _file_handler is None:
+        ensure_app_dirs()
         _file_handler = logging.handlers.TimedRotatingFileHandler(
             LOG_FILE, when="midnight", backupCount=1, encoding="utf-8",
         )
@@ -135,7 +184,7 @@ def is_foreground_fullscreen() -> bool:
         return False
 
 
-def get_foreground_info() -> tuple[str, str] | None:
+def get_foreground_info() -> Optional[Tuple[str, str]]:
     """Return (process_name, window_title) of the current foreground window."""
     hwnd = GetForegroundWindow()
     if not hwnd:
@@ -171,7 +220,7 @@ IsWindowVisible = user32.IsWindowVisible
 IsWindowVisible.argtypes = [ctypes.wintypes.HWND]
 IsWindowVisible.restype = ctypes.wintypes.BOOL
 
-_MUSIC_PROCESS_MAP: dict[str, str] = {
+_MUSIC_PROCESS_MAP: Dict[str, str] = {
     "spotify.exe": "Spotify",
     "qqmusic.exe": "QQ音乐",
     "cloudmusic.exe": "网易云音乐",
@@ -191,7 +240,7 @@ _MUSIC_PROCESS_MAP: dict[str, str] = {
 }
 
 
-def _parse_spotify_title(title: str) -> tuple[str, str] | None:
+def _parse_spotify_title(title: str) -> Optional[Tuple[str, str]]:
     if title in ("Spotify", "Spotify Free", "Spotify Premium"):
         return None
     if " - " in title:
@@ -200,7 +249,7 @@ def _parse_spotify_title(title: str) -> tuple[str, str] | None:
     return title, ""
 
 
-def _parse_dash_title(title: str, app_suffix: str = "") -> tuple[str, str] | None:
+def _parse_dash_title(title: str, app_suffix: str = "") -> Optional[Tuple[str, str]]:
     if app_suffix and title.rstrip() == app_suffix:
         return None
     if " - " in title:
@@ -209,7 +258,7 @@ def _parse_dash_title(title: str, app_suffix: str = "") -> tuple[str, str] | Non
     return title, ""
 
 
-def _parse_foobar_title(title: str) -> tuple[str, str] | None:
+def _parse_foobar_title(title: str) -> Optional[Tuple[str, str]]:
     import re
     cleaned = re.sub(r"\s*\[foobar2000[^\]]*\]\s*$", "", title)
     if not cleaned or cleaned == title:
@@ -223,9 +272,9 @@ def _parse_foobar_title(title: str) -> tuple[str, str] | None:
     return cleaned, ""
 
 
-def get_music_info() -> dict | None:
+def get_music_info() -> Optional[dict]:
     """Scan all windows to find a known music player and extract now-playing info."""
-    results: list[tuple[str, str, str]] = []
+    results: List[Tuple[str, str, str]] = []
 
     def enum_callback(hwnd: int, _lParam: int) -> bool:
         if not IsWindowVisible(hwnd):
@@ -268,7 +317,7 @@ def get_music_info() -> dict | None:
     if not results:
         return None
     app, title, artist = results[0]
-    info: dict[str, str] = {"app": app}
+    info: Dict[str, str] = {"app": app}
     if title:
         info["title"] = title[:256]
     if artist:
@@ -299,10 +348,39 @@ def format_report_target(app_id: str, window_title: str) -> str:
     return f"{app} — {title[:80]}"
 
 
-# ---------------------------------------------------------------------------
-# Config — stored next to the exe for easy cleanup
-# ---------------------------------------------------------------------------
-CONFIG_PATH = base_dir / "config.json"
+def get_default_device_name() -> str:
+    """Return a human-friendly default device name."""
+    return os.getenv("COMPUTERNAME", "").strip() or socket.gethostname().strip() or "My PC"
+
+
+def get_default_device_id() -> str:
+    """Return a stable default device id derived from the hostname."""
+    raw = get_default_device_name().lower()
+    normalized = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-.")
+    return normalized[:64] or "windows-pc"
+
+
+def validate_server_url(url: str) -> Optional[str]:
+    """Validate the server URL only."""
+    parsed = urllib.parse.urlparse(url)
+    scheme = parsed.scheme.lower()
+    hostname = parsed.hostname
+    if scheme not in ("http", "https"):
+        return "服务器地址必须使用 http:// 或 https://"
+    if not hostname:
+        return "服务器地址无效"
+
+    if scheme == "http":
+        try:
+            addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        except socket.gaierror:
+            return f"无法解析域名: {hostname}"
+        for info in addrinfos:
+            ip = ipaddress.ip_address(info[4][0])
+            if ip.is_global:
+                return "HTTP 仅允许内网地址, 公网请使用 HTTPS"
+    return None
+
 
 _DEFAULT_CFG = {
     "server_url": "",
@@ -315,14 +393,15 @@ _DEFAULT_CFG = {
 
 
 def load_config() -> dict:
-    """Load config.json, return config dict (may be empty on error)."""
+    """Load config from AppData, return config dict (may be empty on error)."""
+    migrate_legacy_files()
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg = json.load(f)
     except FileNotFoundError:
         return dict(_DEFAULT_CFG)
     except (PermissionError, json.JSONDecodeError) as e:
-        log.error("config.json: %s", e)
+        log.error("%s: %s", CONFIG_PATH, e)
         return dict(_DEFAULT_CFG)
 
     if not isinstance(cfg, dict):
@@ -349,9 +428,10 @@ def load_config() -> dict:
 
 
 def save_config(cfg: dict) -> bool:
-    """Save config to config.json atomically with restricted permissions."""
+    """Save config to AppData atomically with restricted permissions."""
     import tempfile
     try:
+        ensure_app_dirs()
         data = json.dumps(cfg, indent=2, ensure_ascii=False).encode("utf-8")
         fd = tempfile.NamedTemporaryFile(
             dir=CONFIG_PATH.parent, prefix=".config_", suffix=".tmp",
@@ -375,7 +455,7 @@ def save_config(cfg: dict) -> bool:
         return False
 
 
-def validate_config(cfg: dict) -> str | None:
+def validate_config(cfg: dict) -> Optional[str]:
     """Validate config. Return error message or None if valid."""
     url = cfg.get("server_url", "").strip()
     token = cfg.get("token", "").strip()
@@ -383,26 +463,7 @@ def validate_config(cfg: dict) -> str | None:
         return "服务器地址不能为空"
     if not token or token == "YOUR_TOKEN_HERE":
         return "Token 不能为空"
-
-    parsed = urllib.parse.urlparse(url)
-    scheme = parsed.scheme.lower()
-    hostname = parsed.hostname
-    if scheme not in ("http", "https"):
-        return "服务器地址必须使用 http:// 或 https://"
-    if not hostname:
-        return "服务器地址无效"
-
-    if scheme == "http":
-        try:
-            addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        except socket.gaierror:
-            return f"无法解析域名: {hostname}"
-        for info in addrinfos:
-            ip = ipaddress.ip_address(info[4][0])
-            if ip.is_global:
-                return "HTTP 仅允许内网地址, 公网请使用 HTTPS"
-
-    return None
+    return validate_server_url(url)
 
 
 # ---------------------------------------------------------------------------
@@ -506,10 +567,52 @@ def show_message(title: str, message: str, error: bool = False) -> None:
         log.info("%s: %s", title, message)
 
 
+def request_token(
+    server_url: str,
+    enroll_secret: str,
+    device_id: str,
+    device_name: str,
+) -> Tuple[Optional[str], str]:
+    """Request a token from the backend enrollment endpoint."""
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        response = session.post(
+            server_url.rstrip("/") + "/api/enroll-token",
+            json={
+                "enroll_secret": enroll_secret,
+                "device_id": device_id,
+                "device_name": device_name,
+                "platform": "windows",
+            },
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return None, f"请求失败: {e}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if response.status_code != 200:
+        error_text = payload.get("error") if isinstance(payload, dict) else None
+        return None, error_text or f"服务器返回 {response.status_code}"
+
+    token = payload.get("token") if isinstance(payload, dict) else None
+    if not isinstance(token, str) or not token.strip():
+        return None, "服务端未返回有效 token"
+
+    reused = bool(payload.get("reused")) if isinstance(payload, dict) else False
+    source = payload.get("source") if isinstance(payload, dict) else "db"
+    action = "复用" if reused else "创建"
+    return token.strip(), f"Token {action}成功（来源: {source}）"
+
+
 # ---------------------------------------------------------------------------
 # Settings Dialog
 # ---------------------------------------------------------------------------
-def show_settings_dialog(current_config: dict | None = None) -> dict | None:
+def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict]:
     """Show tkinter settings dialog. Returns new config or None if cancelled."""
     try:
         import tkinter as tk
@@ -519,7 +622,7 @@ def show_settings_dialog(current_config: dict | None = None) -> dict | None:
         return None
 
     cfg = current_config or dict(_DEFAULT_CFG)
-    result: list[dict | None] = [None]
+    result: List[Optional[dict]] = [None]
 
     root = tk.Tk()
     root.title("Live Dashboard - 设置")
@@ -536,22 +639,62 @@ def show_settings_dialog(current_config: dict | None = None) -> dict | None:
     token_var = tk.StringVar(value=cfg.get("token", ""))
     ttk.Entry(frame, textvariable=token_var, width=45, show="*").grid(row=1, column=1, pady=6, padx=(8, 0))
 
-    ttk.Label(frame, text="上报间隔 (秒):").grid(row=2, column=0, sticky="w", pady=6)
+    ttk.Label(frame, text="设备 ID:").grid(row=2, column=0, sticky="w", pady=6)
+    device_id_var = tk.StringVar(value=get_default_device_id())
+    ttk.Entry(frame, textvariable=device_id_var, width=45).grid(row=2, column=1, pady=6, padx=(8, 0))
+
+    ttk.Label(frame, text="设备名称:").grid(row=3, column=0, sticky="w", pady=6)
+    device_name_var = tk.StringVar(value=get_default_device_name())
+    ttk.Entry(frame, textvariable=device_name_var, width=45).grid(row=3, column=1, pady=6, padx=(8, 0))
+
+    ttk.Label(frame, text="注册密钥:").grid(row=4, column=0, sticky="w", pady=6)
+    enroll_secret_var = tk.StringVar()
+    ttk.Entry(frame, textvariable=enroll_secret_var, width=45, show="*").grid(row=4, column=1, pady=6, padx=(8, 0))
+
+    ttk.Label(frame, text="上报间隔 (秒):").grid(row=5, column=0, sticky="w", pady=6)
     interval_var = tk.IntVar(value=cfg.get("interval_seconds", 5))
-    ttk.Spinbox(frame, textvariable=interval_var, from_=1, to=300, width=10).grid(row=2, column=1, sticky="w", pady=6, padx=(8, 0))
+    ttk.Spinbox(frame, textvariable=interval_var, from_=1, to=300, width=10).grid(row=5, column=1, sticky="w", pady=6, padx=(8, 0))
 
-    ttk.Label(frame, text="心跳间隔 (秒):").grid(row=3, column=0, sticky="w", pady=6)
+    ttk.Label(frame, text="心跳间隔 (秒):").grid(row=6, column=0, sticky="w", pady=6)
     heartbeat_var = tk.IntVar(value=cfg.get("heartbeat_seconds", 60))
-    ttk.Spinbox(frame, textvariable=heartbeat_var, from_=10, to=600, width=10).grid(row=3, column=1, sticky="w", pady=6, padx=(8, 0))
+    ttk.Spinbox(frame, textvariable=heartbeat_var, from_=10, to=600, width=10).grid(row=6, column=1, sticky="w", pady=6, padx=(8, 0))
 
-    ttk.Label(frame, text="AFK 判定 (秒):").grid(row=4, column=0, sticky="w", pady=6)
+    ttk.Label(frame, text="AFK 判定 (秒):").grid(row=7, column=0, sticky="w", pady=6)
     idle_var = tk.IntVar(value=cfg.get("idle_threshold_seconds", 300))
-    ttk.Spinbox(frame, textvariable=idle_var, from_=30, to=3600, width=10).grid(row=4, column=1, sticky="w", pady=6, padx=(8, 0))
+    ttk.Spinbox(frame, textvariable=idle_var, from_=30, to=3600, width=10).grid(row=7, column=1, sticky="w", pady=6, padx=(8, 0))
 
     log_var = tk.BooleanVar(value=cfg.get("enable_log", False))
     ttk.Checkbutton(frame, text="开启日志文件 (保留 2 天)", variable=log_var).grid(
-        row=5, column=0, columnspan=2, sticky="w", pady=6
+        row=8, column=0, columnspan=2, sticky="w", pady=6
     )
+
+    def on_request_token():
+        url = url_var.get().strip()
+        enroll_secret = enroll_secret_var.get().strip()
+        device_id = device_id_var.get().strip()
+        device_name = device_name_var.get().strip()
+
+        err = validate_server_url(url) if url else "服务器地址不能为空"
+        if err:
+            messagebox.showerror("申请失败", err, parent=root)
+            return
+        if not enroll_secret:
+            messagebox.showerror("申请失败", "注册密钥不能为空", parent=root)
+            return
+        if not device_id:
+            messagebox.showerror("申请失败", "设备 ID 不能为空", parent=root)
+            return
+        if not device_name:
+            messagebox.showerror("申请失败", "设备名称不能为空", parent=root)
+            return
+
+        token, status = request_token(url, enroll_secret, device_id, device_name)
+        if not token:
+            messagebox.showerror("申请失败", status, parent=root)
+            return
+
+        token_var.set(token)
+        messagebox.showinfo("申请成功", status, parent=root)
 
     def on_save():
         new_cfg = {
@@ -570,10 +713,11 @@ def show_settings_dialog(current_config: dict | None = None) -> dict | None:
             result[0] = new_cfg
             root.destroy()
         else:
-            messagebox.showerror("保存失败", "无法写入 config.json", parent=root)
+            messagebox.showerror("保存失败", f"无法写入 {CONFIG_PATH}", parent=root)
 
     btn_frame = ttk.Frame(frame)
-    btn_frame.grid(row=6, column=0, columnspan=2, pady=16)
+    btn_frame.grid(row=9, column=0, columnspan=2, pady=16)
+    ttk.Button(btn_frame, text="申请 Token", command=on_request_token).pack(side="left", padx=12)
     ttk.Button(btn_frame, text="保存", command=on_save).pack(side="left", padx=12)
     ttk.Button(btn_frame, text="取消", command=root.destroy).pack(side="left", padx=12)
 
@@ -604,6 +748,7 @@ class Reporter:
         self.endpoint = server_url.rstrip("/") + "/api/report"
         self.token = token
         self.session = requests.Session()
+        self.session.trust_env = False
         self.session.headers.update({
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
@@ -612,7 +757,7 @@ class Reporter:
         self._current_backoff = 0
         self._pause_until = 0.0
 
-    def send(self, app_id: str, window_title: str, extra: dict | None = None) -> bool:
+    def send(self, app_id: str, window_title: str, extra: Optional[dict] = None) -> bool:
         if self.pause_remaining > 0:
             return False
 
@@ -691,7 +836,7 @@ class TrayAgent:
         self._lock = threading.Lock()
         self._status = "初始化中"
         self._current_target = ""
-        self._icon: pystray.Icon | None = None
+        self._icon: Optional[pystray.Icon] = None
         self._settings_requested = False
         self._icons = {
             "green": _make_tray_icon("green"),
@@ -709,6 +854,7 @@ class TrayAgent:
                        checked=lambda _: _file_handler is not None),
             p.MenuItem("开机自启", self._toggle_autostart,
                        checked=lambda _: is_autostart_enabled()),
+            p.MenuItem("打开数据目录", self._open_data_dir),
             p.MenuItem("设置", self._open_settings),
             p.Menu.SEPARATOR,
             p.MenuItem("退出", self._quit),
@@ -722,7 +868,7 @@ class TrayAgent:
         with self._lock:
             return self._current_target
 
-    def update_status(self, status: str, current_target: str | None = None):
+    def update_status(self, status: str, current_target: Optional[str] = None):
         with self._lock:
             self._status = status
             if current_target is not None:
@@ -777,6 +923,13 @@ class TrayAgent:
         if self._icon:
             self._icon.stop()
 
+    def _open_data_dir(self):
+        ensure_app_dirs()
+        try:
+            os.startfile(str(APP_DATA_DIR))  # type: ignore[attr-defined]
+        except Exception as e:
+            log.error("Open data dir failed: %s", e)
+
     def _quit(self):
         shutdown_event.set()
         if self._icon:
@@ -809,13 +962,13 @@ class TrayAgent:
 # ---------------------------------------------------------------------------
 # Monitor loop
 # ---------------------------------------------------------------------------
-def _monitor_loop(cfg: dict, reporter: Reporter, tray: TrayAgent | None) -> None:
+def _monitor_loop(cfg: dict, reporter: Reporter, tray: Optional["TrayAgent"]) -> None:
     interval = cfg["interval_seconds"]
     heartbeat_interval = cfg["heartbeat_seconds"]
     idle_threshold = cfg["idle_threshold_seconds"]
 
-    prev_app: str | None = None
-    prev_title: str | None = None
+    prev_app: Optional[str] = None
+    prev_title: Optional[str] = None
     last_report_time: float = 0
     was_idle = False
 
@@ -905,7 +1058,10 @@ def _monitor_loop(cfg: dict, reporter: Reporter, tray: TrayAgent | None) -> None
 # Main
 # ---------------------------------------------------------------------------
 def main() -> None:
+    ensure_app_dirs()
+    migrate_legacy_files()
     log.info("Live Dashboard Windows Agent")
+    log.info("Data dir: %s", APP_DATA_DIR)
 
     while True:
         cfg = load_config()
@@ -933,7 +1089,7 @@ def main() -> None:
 
         reporter = Reporter(cfg["server_url"], cfg["token"])
 
-        tray: TrayAgent | None = None
+        tray: Optional[TrayAgent] = None
         try:
             tray = TrayAgent()
         except ImportError:
