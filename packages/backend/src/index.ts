@@ -8,6 +8,7 @@ import { handleHealth } from "./routes/health";
 import { handleHealthData, handleHealthDataQuery } from "./routes/health-data";
 import { handleHealthWebhook } from "./routes/health-webhook";
 import { handleConfig } from "./routes/config";
+import { handleEnrollToken } from "./routes/enroll-token";
 import { injectSiteConfig } from "./services/site-config";
 
 // Start scheduled cleanup tasks (import triggers setInterval registration)
@@ -85,6 +86,8 @@ const server = Bun.serve({
         response = await handleHealthWebhook(req);
       } else if (pathname === "/api/config" && req.method === "GET") {
         response = handleConfig();
+      } else if (pathname === "/api/enroll-token" && req.method === "POST") {
+        response = await handleEnrollToken(req);
       } else if (!pathname.startsWith("/api/")) {
         // Static file serving disabled if directory doesn't exist
         if (!staticEnabled) {

@@ -1,24 +1,27 @@
 services:
   dashboard:
-    build: .
+    build:
+      context: .
     container_name: live_dashboard
     restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3000}:3000"
     environment:
-      - PORT=3000
-      - STATIC_DIR=/app/public
-      - DB_PATH=/data/live-dashboard.db
-      - DEVICE_TOKEN_1=${DEVICE_TOKEN_1}
-      - DEVICE_TOKEN_2=${DEVICE_TOKEN_2}
-      - HASH_SECRET=${HASH_SECRET}
-      - DISPLAY_NAME=${DISPLAY_NAME}
-      - SITE_TITLE=${SITE_TITLE}
-      - SITE_DESC=${SITE_DESC}
-      - SITE_FAVICON=${SITE_FAVICON}
+      PORT: 3000
+      STATIC_DIR: /app/public
+      DB_PATH: /data/live-dashboard.db
+      DEVICE_TOKEN_1: ${DEVICE_TOKEN_1}
+      DEVICE_TOKEN_2: ${DEVICE_TOKEN_2:-}
+      DEVICE_TOKEN_3: ${DEVICE_TOKEN_3:-}
+      DEVICE_TOKEN_4: ${DEVICE_TOKEN_4:-}
+      HASH_SECRET: ${HASH_SECRET}
+      ENROLL_SECRET: ${ENROLL_SECRET:-}
+      DISPLAY_NAME: ${DISPLAY_NAME:-Monika}
+      SITE_TITLE: ${SITE_TITLE:-Monika Now}
+      SITE_DESC: ${SITE_DESC:-What is Monika doing right now?}
+      SITE_FAVICON: ${SITE_FAVICON:-/favicon.ico}
     volumes:
       - dashboard_data:/data
-    networks:
-      dm_network:
-        ipv4_address: 172.20.0.80
     mem_limit: 128m
     cpus: 0.5
     logging:
@@ -29,8 +32,3 @@ services:
 
 volumes:
   dashboard_data:
-
-networks:
-  dm_network:
-    external: true
-    name: your_external_network  # Replace with your Docker network name

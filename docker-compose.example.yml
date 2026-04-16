@@ -14,7 +14,10 @@ services:
       - DB_PATH=/data/live-dashboard.db
       - DEVICE_TOKEN_1=${DEVICE_TOKEN_1}
       - DEVICE_TOKEN_2=${DEVICE_TOKEN_2}
+      - DEVICE_TOKEN_3=${DEVICE_TOKEN_3}
+      - DEVICE_TOKEN_4=${DEVICE_TOKEN_4}
       - HASH_SECRET=${HASH_SECRET}
+      - ENROLL_SECRET=${ENROLL_SECRET}
     volumes:
       - dashboard_data:/data
     mem_limit: 128m

@@ -1,7 +1,15 @@
+export type DevicePlatform = "windows" | "android" | "macos";
+
 export interface DeviceInfo {
   device_id: string;
   device_name: string;
-  platform: "windows" | "android" | "macos";
+  platform: DevicePlatform;
+}
+
+export interface DeviceTokenRecord extends DeviceInfo {
+  token: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ReportPayload {

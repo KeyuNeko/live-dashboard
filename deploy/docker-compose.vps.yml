@@ -1,0 +1,31 @@
+services:
+  dashboard:
+    image: ghcr.io/monika-dream/live-dashboard:latest
+    container_name: live_dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    environment:
+      DB_PATH: /data/live-dashboard.db
+      DEVICE_TOKEN_1: ${DEVICE_TOKEN_1}
+      DEVICE_TOKEN_2: ${DEVICE_TOKEN_2:-}
+      DEVICE_TOKEN_3: ${DEVICE_TOKEN_3:-}
+      DEVICE_TOKEN_4: ${DEVICE_TOKEN_4:-}
+      HASH_SECRET: ${HASH_SECRET}
+      ENROLL_SECRET: ${ENROLL_SECRET:-}
+      DISPLAY_NAME: ${DISPLAY_NAME:-Monika}
+      SITE_TITLE: ${SITE_TITLE:-Monika Now}
+      SITE_DESC: ${SITE_DESC:-What is Monika doing right now?}
+      SITE_FAVICON: ${SITE_FAVICON:-/favicon.ico}
+    volumes:
+      - dashboard_data:/data
+    mem_limit: 128m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  dashboard_data:

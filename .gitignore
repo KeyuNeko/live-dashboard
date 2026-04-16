@@ -14,6 +14,7 @@ agents/macos/config.json
 agents/macos/agent.log
 agents/macos/.venv/
 *.exe
+!packages/frontend/public/downloads/*.exe
 __pycache__/
 *.spec
 build/

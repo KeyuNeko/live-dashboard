@@ -60,9 +60,21 @@ db.run(`
   )
 `);
 
+// Device tokens table
+db.run(`
+  CREATE TABLE IF NOT EXISTS device_tokens (
+    token TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL UNIQUE,
+    device_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )
+`);
+
 // ── Schema migration: add display_title + extra columns ──
 
-const KNOWN_TABLES = new Set(["activities", "device_states"]);
+const KNOWN_TABLES = new Set(["activities", "device_states", "device_tokens"]);
 
 function columnExists(table: string, column: string): boolean {
   if (!KNOWN_TABLES.has(table)) {
@@ -179,6 +191,36 @@ export const markOfflineDevices = db.prepare(`
 
 export const cleanupOldActivities = db.prepare(`
   DELETE FROM activities WHERE created_at < datetime('now', '-7 days')
+`);
+
+export const getDeviceTokenByToken = db.prepare(`
+  SELECT token, device_id, device_name, platform, created_at, updated_at
+  FROM device_tokens
+  WHERE token = ?
+  LIMIT 1
+`);
+
+export const getDeviceTokenByDeviceId = db.prepare(`
+  SELECT token, device_id, device_name, platform, created_at, updated_at
+  FROM device_tokens
+  WHERE device_id = ?
+  LIMIT 1
+`);
+
+export const upsertDeviceToken = db.prepare(`
+  INSERT INTO device_tokens (token, device_id, device_name, platform)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT(device_id) DO UPDATE SET
+    token = excluded.token,
+    device_name = excluded.device_name,
+    platform = excluded.platform,
+    updated_at = datetime('now')
+`);
+
+export const updateDeviceTokenMetadata = db.prepare(`
+  UPDATE device_tokens
+  SET device_name = ?, platform = ?, updated_at = datetime('now')
+  WHERE device_id = ?
 `);
 
 export default db;

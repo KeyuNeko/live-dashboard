@@ -1,0 +1,9 @@
+server_url=https://now.m1301.cyou
+token=c821849b6b8117de5bd464e247808a27
+report_interval=30
+monitoring_enabled=true
+
+# Android App 说明
+# 1. 服务器地址必须使用 HTTPS
+# 2. 在 Setup 页面保存后，点击“开始监听”
+# 3. 心跳间隔建议 20-30 秒；这里默认写 30 秒

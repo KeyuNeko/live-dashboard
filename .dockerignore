@@ -1,0 +1,14 @@
+.git
+.github
+.env
+docs
+deploy
+node_modules
+packages/backend/node_modules
+packages/frontend/node_modules
+packages/backend/public
+packages/frontend/.next
+packages/frontend/out
+*.db
+*.db-shm
+*.db-wal

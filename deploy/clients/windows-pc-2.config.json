@@ -1,0 +1,7 @@
+{
+  "server_url": "https://now.m1301.cyou",
+  "token": "8abcafcc5a2dcdbaa5a67a05b324c854",
+  "interval_seconds": 5,
+  "heartbeat_seconds": 60,
+  "idle_threshold_seconds": 300
+}

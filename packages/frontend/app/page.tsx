@@ -6,6 +6,7 @@ import { useConfig, useConfigLoader, ConfigContext } from "@/hooks/useConfig";
 import type { DeviceState } from "@/lib/api";
 import { fetchHealthData } from "@/lib/api";
 import Header from "@/components/Header";
+import ClientDownloads from "@/components/ClientDownloads";
 import CurrentStatus from "@/components/CurrentStatus";
 import DeviceCard from "@/components/DeviceCard";
 import DatePicker from "@/components/DatePicker";
@@ -120,6 +121,7 @@ function HomeInner() {
   return (
     <>
       <Header serverTime={current?.server_time} viewerCount={viewerCount} />
+      <ClientDownloads />
 
       {/* Error banner */}
       {error && (
