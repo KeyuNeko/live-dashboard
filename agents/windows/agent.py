@@ -6,6 +6,8 @@ Monitors the foreground window and reports app usage to the dashboard backend.
 import ctypes
 import ctypes.wintypes
 from datetime import datetime, timezone
+import getpass
+import hashlib
 import ipaddress
 import json
 import logging
@@ -19,11 +21,14 @@ import sys
 import threading
 import time
 import urllib.parse
+import platform as py_platform
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import psutil
 import requests
+
+CLIENT_VERSION = "2026.04.16.2"
 
 if getattr(sys, "frozen", False):
     base_dir = Path(sys.executable).parent
@@ -354,10 +359,35 @@ def get_default_device_name() -> str:
 
 
 def get_default_device_id() -> str:
-    """Return a stable default device id derived from the hostname."""
-    raw = get_default_device_name().lower()
-    normalized = re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-.")
-    return normalized[:64] or "windows-pc"
+    """Return a stable privacy-safe device id derived from Windows MachineGuid."""
+    machine_guid = ""
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"SOFTWARE\Microsoft\Cryptography",
+        ) as key:
+            machine_guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+    except Exception:
+        machine_guid = ""
+
+    raw = (str(machine_guid).strip() or get_default_device_name()).lower()
+    digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:12]
+    return f"win-{digest}"
+
+
+def get_client_metadata() -> dict:
+    """Return non-sensitive metadata for admin approval."""
+    try:
+        username = getpass.getuser()
+    except Exception:
+        username = os.getenv("USERNAME", "")
+    return {
+        "client_version": CLIENT_VERSION,
+        "os_version": py_platform.platform(),
+        "hostname": socket.gethostname(),
+        "username": username,
+    }
 
 
 def validate_server_url(url: str) -> Optional[str]:
@@ -585,6 +615,7 @@ def request_access(
                 "device_id": device_id,
                 "device_name": device_name,
                 "platform": "windows",
+                **get_client_metadata(),
             },
             timeout=15,
         )
@@ -660,6 +691,7 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
 
     cfg = current_config or dict(_DEFAULT_CFG)
     result: List[Optional[dict]] = [None]
+    poll_state = {"remaining": 0, "after_id": None}
 
     root = tk.Tk()
     root.title("Live Dashboard - 设置")
@@ -719,6 +751,24 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
         }
         save_config(draft_cfg)
 
+    def start_auto_poll():
+        poll_state["remaining"] = 60  # 60 * 5s = 5 minutes
+        schedule_next_poll()
+
+    def schedule_next_poll():
+        if poll_state["remaining"] <= 0:
+            return
+        poll_state["after_id"] = root.after(5000, auto_poll_once)
+
+    def auto_poll_once():
+        if not pending_request_var.get().strip() or token_var.get().strip():
+            return
+        status = on_check_status(silent=True)
+        if status in ("approved", "rejected"):
+            return
+        poll_state["remaining"] -= 1
+        schedule_next_poll()
+
     def on_request_access():
         url = url_var.get().strip()
         device_id = device_id_var.get().strip()
@@ -749,18 +799,21 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
 
         pending_request_var.set(value)
         save_partial_request_key(value)
+        start_auto_poll()
         messagebox.showinfo("已提交申请", f"{message}\n\n申请编号：{value}", parent=root)
 
-    def on_check_status():
+    def on_check_status(silent: bool = False) -> str:
         url = url_var.get().strip()
         request_key = pending_request_var.get().strip()
         err = validate_server_url(url) if url else "服务器地址不能为空"
         if err:
-            messagebox.showerror("检查失败", err, parent=root)
-            return
+            if not silent:
+                messagebox.showerror("检查失败", err, parent=root)
+            return "error"
         if not request_key:
-            messagebox.showerror("检查失败", "申请编号不能为空", parent=root)
-            return
+            if not silent:
+                messagebox.showerror("检查失败", "申请编号不能为空", parent=root)
+            return "error"
 
         status, value, message = check_enrollment_status(url, request_key)
         if status == "approved" and value:
@@ -768,17 +821,20 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
             pending_request_var.set("")
             save_partial_request_key("")
             messagebox.showinfo("审批通过", message, parent=root)
-            return
+            return "approved"
         if status == "rejected":
             pending_request_var.set("")
             save_partial_request_key("")
             messagebox.showwarning("审批未通过", message, parent=root)
-            return
+            return "rejected"
         if status == "pending":
             save_partial_request_key(request_key)
-            messagebox.showinfo("仍在等待", message, parent=root)
-            return
-        messagebox.showerror("检查失败", message, parent=root)
+            if not silent:
+                messagebox.showinfo("仍在等待", message, parent=root)
+            return "pending"
+        if not silent:
+            messagebox.showerror("检查失败", message, parent=root)
+        return "error"
 
     def on_save():
         new_cfg = {
@@ -817,6 +873,8 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
     root.geometry(f"+{x}+{y}")
     root.lift()
     root.focus_force()
+    if pending_request_var.get().strip() and not token_var.get().strip():
+        root.after(1000, start_auto_poll)
 
     root.mainloop()
     return result[0]
