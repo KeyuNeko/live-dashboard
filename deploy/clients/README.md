@@ -6,7 +6,7 @@
 https://now.m1301.cyou
 ```
 
-## Windows
+## Windows（审批流）
 
 对应文件：
 
@@ -16,11 +16,16 @@ https://now.m1301.cyou
 用法：
 
 1. 下载 `live-dashboard-agent.exe`
-2. 把对应设备的配置文件复制到 `.exe` 同目录
-3. 重命名为 `config.json`
-4. 双击运行
+2. 双击运行
+3. 在设置页填写：
+   - `server_url`
+   - `device_id`
+   - `device_name`
+4. 点击“提交接入申请”
+5. 管理员在 `/admin` 批准
+6. 客户端点击“检查审批状态”
 
-## Android
+## Android（审批流源码已接入）
 
 对应文件：
 
@@ -31,14 +36,16 @@ https://now.m1301.cyou
 
 1. 安装 Android App
 2. 打开 `SetupScreen`
-3. 按对应文件填写 `server_url`、`token`、`report_interval`
-4. 保存后点击“开始监听”
+3. 填写 `server_url`、`device_id`、`device_name`
+4. 点击“提交接入申请”
+5. 管理员在 `/admin` 批准
+6. 点击“检查审批状态”领取 token
 
 ## 设备对应关系
 
 | 设备 | 平台 | device_id | token |
 |---|---|---|---|
-| PC 1 | Windows | `pc-1` | `a3f79ea538aa5d31d454ab998446b5cb` |
-| PC 2 | Windows | `pc-2` | `8abcafcc5a2dcdbaa5a67a05b324c854` |
-| Android 1 | Android | `android-1` | `d787e5ef91f8dfe220f57f2987911ca3` |
-| Android 2 | Android | `android-2` | `c821849b6b8117de5bd464e247808a27` |
+| PC 1 | Windows | `pc-1` | 由管理员审批后自动签发 |
+| PC 2 | Windows | `pc-2` | 由管理员审批后自动签发 |
+| Android 1 | Android | `android-1` | 由管理员审批后自动签发 |
+| Android 2 | Android | `android-2` | 由管理员审批后自动签发 |

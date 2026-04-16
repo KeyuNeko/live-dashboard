@@ -19,6 +19,7 @@
 - 猫耳装饰的视觉小说风格对话框 + 中文戏剧化活动描述
 - 飘落的樱花花瓣动画，夜间自动切换萤火主题
 - 三级隐私系统（SHOW / BROWSER / HIDE）保护敏感窗口标题
+- 管理员后台 + 设备审批接入流（`/admin`）
 - 系统托盘常驻 + AFK 检测（看视频/听歌时自动豁免）
 - 音乐检测（Spotify、QQ音乐、网易云等）
 - Health Connect 健康数据同步（Android）
@@ -54,6 +55,29 @@ echo "Token: $TOKEN  ← Agent 配置用"
 | Windows | `live-dashboard-agent.exe` | [Wiki - Windows Agent](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-Windows) |
 | macOS | `live-dashboard-agent-macos.zip` | [Wiki - macOS Agent](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-macOS) |
 | Android | `live-dashboard.apk` | [Wiki - Android App](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-Android) |
+
+## 管理员后台 / 设备审批
+
+部署后可通过：
+
+```txt
+https://your-domain/admin
+```
+
+进入管理员后台。
+
+推荐接入流程：
+
+1. 客户端填写 `server_url`、`device_id`、`device_name`
+2. 客户端点击“提交接入申请”
+3. 管理员在 `/admin` 审批
+4. 客户端点击“检查审批状态”领取 token
+
+后端需要配置：
+
+```env
+ADMIN_SECRET=your_admin_secret
+```
 
 ## 主题
 
