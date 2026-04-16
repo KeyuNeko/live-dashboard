@@ -1,10 +1,17 @@
-const DOWNLOAD_LINKS = [
+interface DownloadLink {
+  label: string;
+  hint: string;
+  href: string;
+  icon: string;
+  download?: string;
+}
+
+const DOWNLOAD_LINKS: DownloadLink[] = [
   {
     label: "Windows 客户端",
     hint: "下载 .exe",
-    href: "/downloads/live-dashboard-agent.exe",
+    href: "https://github.com/KeyuNeko/live-dashboard/releases/download/custom-windows-agent-20260416/live-dashboard-agent.exe",
     icon: "\u{1F5A5}",
-    download: "live-dashboard-agent.exe",
   },
   {
     label: "Android App",
@@ -43,7 +50,7 @@ export default function ClientDownloads() {
             </a>
           ))}
           <a
-            href="https://github.com/Monika-Dream/live-dashboard/releases/latest"
+            href="https://github.com/KeyuNeko/live-dashboard/releases"
             target="_blank"
             rel="noreferrer"
             className="pill-btn text-xs"
