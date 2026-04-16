@@ -42,6 +42,9 @@ export default function Header({ serverTime, viewerCount = 0 }: HeaderProps) {
 
         {/* Right: viewer count + time */}
         <div className="text-right flex flex-col items-end gap-0.5">
+          <a href="/admin" className="text-[10px] text-[var(--color-text-muted)] hover:text-[var(--color-primary)]">
+            管理后台
+          </a>
           {viewerCount > 0 && (
             <p className="text-xs text-[var(--color-primary)] font-medium">
               {viewerCount} 人在看喵~

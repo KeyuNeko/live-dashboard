@@ -84,6 +84,20 @@ export interface HealthDataResponse {
   records: HealthRecord[];
 }
 
+export interface EnrollmentRequestRecord {
+  id: number;
+  request_key: string;
+  device_id: string;
+  device_name: string;
+  platform: string;
+  status: "pending" | "approved" | "rejected";
+  admin_note: string;
+  created_at: string;
+  updated_at: string;
+  approved_at: string;
+  rejected_at: string;
+}
+
 // Site config
 export interface SiteConfig {
   displayName: string;
@@ -144,4 +158,41 @@ export async function fetchHealthData(date: string, signal?: AbortSignal, device
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+export async function fetchEnrollmentRequests(
+  adminSecret: string,
+  signal?: AbortSignal,
+): Promise<EnrollmentRequestRecord[]> {
+  const res = await fetch(`${API_BASE}/api/admin/enrollment-requests`, {
+    signal,
+    headers: {
+      "X-Admin-Secret": adminSecret,
+    },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data.requests) ? data.requests : [];
+}
+
+export async function decideEnrollmentRequest(
+  adminSecret: string,
+  action: "approve" | "reject",
+  id: number,
+  adminNote: string,
+): Promise<EnrollmentRequestRecord> {
+  const res = await fetch(`${API_BASE}/api/admin/enrollment-requests/${action}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Secret": adminSecret,
+    },
+    body: JSON.stringify({
+      id,
+      admin_note: adminNote,
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.request;
 }

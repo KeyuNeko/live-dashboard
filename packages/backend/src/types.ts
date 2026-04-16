@@ -12,6 +12,19 @@ export interface DeviceTokenRecord extends DeviceInfo {
   updated_at: string;
 }
 
+export type EnrollmentRequestStatus = "pending" | "approved" | "rejected";
+
+export interface EnrollmentRequestRecord extends DeviceInfo {
+  id: number;
+  request_key: string;
+  status: EnrollmentRequestStatus;
+  admin_note: string;
+  created_at: string;
+  updated_at: string;
+  approved_at: string;
+  rejected_at: string;
+}
+
 export interface ReportPayload {
   app_id: string;
   window_title?: string;

@@ -18,6 +18,7 @@ services:
       - DEVICE_TOKEN_4=${DEVICE_TOKEN_4}
       - HASH_SECRET=${HASH_SECRET}
       - ENROLL_SECRET=${ENROLL_SECRET}
+      - ADMIN_SECRET=${ADMIN_SECRET}
     volumes:
       - dashboard_data:/data
     mem_limit: 128m

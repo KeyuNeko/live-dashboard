@@ -1,16 +1,24 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
+  getEnrollmentRequestByDeviceId,
   getDeviceTokenByDeviceId,
   getDeviceTokenByToken,
   updateDeviceTokenMetadata,
   upsertDeviceToken,
+  upsertEnrollmentRequest,
 } from "../db";
-import type { DeviceInfo, DevicePlatform, DeviceTokenRecord } from "../types";
+import type {
+  DeviceInfo,
+  DevicePlatform,
+  DeviceTokenRecord,
+  EnrollmentRequestRecord,
+} from "../types";
 
 const tokenMap = new Map<string, DeviceInfo>();
 const envDeviceMap = new Map<string, { token: string } & DeviceInfo>();
 const VALID_PLATFORMS = new Set<DevicePlatform>(["windows", "android", "macos"]);
 const ENROLL_SECRET = (process.env.ENROLL_SECRET || "").trim();
+const ADMIN_SECRET = (process.env.ADMIN_SECRET || "").trim();
 
 function isValidPlatform(value: unknown): value is DevicePlatform {
   return typeof value === "string" && VALID_PLATFORMS.has(value as DevicePlatform);
@@ -31,6 +39,11 @@ function getDbTokenByToken(token: string): DeviceTokenRecord | null {
 
 function getDbTokenByDeviceId(deviceId: string): DeviceTokenRecord | null {
   const row = getDeviceTokenByDeviceId.get(deviceId) as DeviceTokenRecord | null;
+  return row ?? null;
+}
+
+function getDbEnrollmentRequestByDeviceId(deviceId: string): EnrollmentRequestRecord | null {
+  const row = getEnrollmentRequestByDeviceId.get(deviceId) as EnrollmentRequestRecord | null;
   return row ?? null;
 }
 
@@ -138,4 +151,65 @@ export function issueDeviceToken(
   }
 
   throw new Error("Failed to issue device token");
+}
+
+export function findExistingDeviceToken(
+  deviceId: string,
+): { token: string; device: DeviceInfo; source: "env" | "db" } | null {
+  const envDevice = envDeviceMap.get(deviceId);
+  if (envDevice) {
+    return {
+      token: envDevice.token,
+      device: toDeviceInfo(envDevice),
+      source: "env",
+    };
+  }
+
+  const existing = getDbTokenByDeviceId(deviceId);
+  if (!existing) return null;
+  return {
+    token: existing.token,
+    device: toDeviceInfo(existing),
+    source: "db",
+  };
+}
+
+export function adminEnabled(): boolean {
+  return ADMIN_SECRET.length > 0;
+}
+
+export function verifyAdminSecret(secret: string): boolean {
+  if (!adminEnabled()) return false;
+  const provided = Buffer.from(secret.trim(), "utf-8");
+  const expected = Buffer.from(ADMIN_SECRET, "utf-8");
+  if (provided.length !== expected.length) return false;
+  return timingSafeEqual(provided, expected);
+}
+
+export function getAdminSecretFromRequest(req: Request): string {
+  const headerValue =
+    req.headers.get("x-admin-secret") ||
+    req.headers.get("x_admin_secret") ||
+    "";
+  if (headerValue) return headerValue.trim();
+
+  const authHeader = req.headers.get("authorization") || "";
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : "";
+}
+
+export function createEnrollmentRequest(
+  deviceId: string,
+  deviceName: string,
+  platform: DevicePlatform,
+): { requestKey: string; reused: boolean } {
+  const existing = getDbEnrollmentRequestByDeviceId(deviceId);
+  const reused =
+    !!existing &&
+    existing.status === "pending" &&
+    existing.device_name === deviceName &&
+    existing.platform === platform;
+  const requestKey = reused ? existing.request_key : randomBytes(12).toString("hex");
+  upsertEnrollmentRequest.run(requestKey, deviceId, deviceName, platform);
+  return { requestKey, reused };
 }

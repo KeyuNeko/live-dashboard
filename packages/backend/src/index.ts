@@ -9,6 +9,10 @@ import { handleHealthData, handleHealthDataQuery } from "./routes/health-data";
 import { handleHealthWebhook } from "./routes/health-webhook";
 import { handleConfig } from "./routes/config";
 import { handleEnrollToken } from "./routes/enroll-token";
+import { handleDeviceEnrollmentRequest } from "./routes/device-enrollment-request";
+import { handleDeviceEnrollmentStatus } from "./routes/device-enrollment-status";
+import { handleAdminEnrollmentList } from "./routes/admin-enrollment-list";
+import { handleAdminEnrollmentAction } from "./routes/admin-enrollment-action";
 import { injectSiteConfig } from "./services/site-config";
 
 // Start scheduled cleanup tasks (import triggers setInterval registration)
@@ -53,7 +57,7 @@ const server = Bun.serve({
     const corsHeaders: Record<string, string> = {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Admin-Secret",
     };
 
     // Preflight
@@ -88,6 +92,16 @@ const server = Bun.serve({
         response = handleConfig();
       } else if (pathname === "/api/enroll-token" && req.method === "POST") {
         response = await handleEnrollToken(req);
+      } else if (pathname === "/api/device-enrollment/request" && req.method === "POST") {
+        response = await handleDeviceEnrollmentRequest(req);
+      } else if (pathname === "/api/device-enrollment/status" && req.method === "GET") {
+        response = handleDeviceEnrollmentStatus(url);
+      } else if (pathname === "/api/admin/enrollment-requests" && req.method === "GET") {
+        response = handleAdminEnrollmentList(req);
+      } else if (pathname === "/api/admin/enrollment-requests/approve" && req.method === "POST") {
+        response = await handleAdminEnrollmentAction(req, "approve");
+      } else if (pathname === "/api/admin/enrollment-requests/reject" && req.method === "POST") {
+        response = await handleAdminEnrollmentAction(req, "reject");
       } else if (!pathname.startsWith("/api/")) {
         // Static file serving disabled if directory doesn't exist
         if (!staticEnabled) {

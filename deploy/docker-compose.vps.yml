@@ -13,6 +13,7 @@ services:
       DEVICE_TOKEN_4: ${DEVICE_TOKEN_4:-}
       HASH_SECRET: ${HASH_SECRET}
       ENROLL_SECRET: ${ENROLL_SECRET:-}
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
       DISPLAY_NAME: ${DISPLAY_NAME:-Monika}
       SITE_TITLE: ${SITE_TITLE:-Monika Now}
       SITE_DESC: ${SITE_DESC:-What is Monika doing right now?}

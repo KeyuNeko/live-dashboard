@@ -72,9 +72,25 @@ db.run(`
   )
 `);
 
+db.run(`
+  CREATE TABLE IF NOT EXISTS device_enrollment_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_key TEXT NOT NULL UNIQUE,
+    device_id TEXT NOT NULL UNIQUE,
+    device_name TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    admin_note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    approved_at TEXT NOT NULL DEFAULT '',
+    rejected_at TEXT NOT NULL DEFAULT ''
+  )
+`);
+
 // ── Schema migration: add display_title + extra columns ──
 
-const KNOWN_TABLES = new Set(["activities", "device_states", "device_tokens"]);
+const KNOWN_TABLES = new Set(["activities", "device_states", "device_tokens", "device_enrollment_requests"]);
 
 function columnExists(table: string, column: string): boolean {
   if (!KNOWN_TABLES.has(table)) {
@@ -221,6 +237,74 @@ export const updateDeviceTokenMetadata = db.prepare(`
   UPDATE device_tokens
   SET device_name = ?, platform = ?, updated_at = datetime('now')
   WHERE device_id = ?
+`);
+
+export const getEnrollmentRequestByRequestKey = db.prepare(`
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  FROM device_enrollment_requests
+  WHERE request_key = ?
+  LIMIT 1
+`);
+
+export const getEnrollmentRequestByDeviceId = db.prepare(`
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  FROM device_enrollment_requests
+  WHERE device_id = ?
+  LIMIT 1
+`);
+
+export const getEnrollmentRequestById = db.prepare(`
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  FROM device_enrollment_requests
+  WHERE id = ?
+  LIMIT 1
+`);
+
+export const upsertEnrollmentRequest = db.prepare(`
+  INSERT INTO device_enrollment_requests (request_key, device_id, device_name, platform, status, admin_note, approved_at, rejected_at)
+  VALUES (?, ?, ?, ?, 'pending', '', '', '')
+  ON CONFLICT(device_id) DO UPDATE SET
+    request_key = excluded.request_key,
+    device_name = excluded.device_name,
+    platform = excluded.platform,
+    status = 'pending',
+    admin_note = '',
+    approved_at = '',
+    rejected_at = '',
+    updated_at = datetime('now')
+`);
+
+export const approveEnrollmentRequest = db.prepare(`
+  UPDATE device_enrollment_requests
+  SET status = 'approved',
+    admin_note = ?,
+    approved_at = datetime('now'),
+    rejected_at = '',
+    updated_at = datetime('now')
+  WHERE id = ?
+`);
+
+export const rejectEnrollmentRequest = db.prepare(`
+  UPDATE device_enrollment_requests
+  SET status = 'rejected',
+    admin_note = ?,
+    rejected_at = datetime('now'),
+    approved_at = '',
+    updated_at = datetime('now')
+  WHERE id = ?
+`);
+
+export const listEnrollmentRequests = db.prepare(`
+  SELECT id, request_key, device_id, device_name, platform, status, admin_note, created_at, updated_at, approved_at, rejected_at
+  FROM device_enrollment_requests
+  ORDER BY
+    CASE status
+      WHEN 'pending' THEN 0
+      WHEN 'approved' THEN 1
+      ELSE 2
+    END,
+    datetime(updated_at) DESC
+  LIMIT 100
 `);
 
 export default db;
