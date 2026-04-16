@@ -49,6 +49,38 @@ async function serveStaticFile(realFile: string): Promise<Response> {
   return new Response(Bun.file(realFile));
 }
 
+async function resolveStaticCandidate(pathname: string): Promise<string | null> {
+  const decoded = decodeURIComponent(pathname);
+  const safePath = normalize(decoded).replace(/^(\.\.[\/\\])+/, "");
+  const normalizedPath = safePath.replace(/^[\/\\]+/, "");
+
+  const candidates = [resolve(STATIC_ROOT, normalizedPath)];
+  if (normalizedPath && !/[\\/][^\\/]*\.[^\\/]+$/.test(normalizedPath) && !normalizedPath.endsWith(".html")) {
+    candidates.push(resolve(STATIC_ROOT, `${normalizedPath}.html`));
+  }
+
+  for (const candidate of candidates) {
+    const rel = relative(STATIC_ROOT, candidate);
+    if (rel.startsWith("..")) {
+      return "__FORBIDDEN__";
+    }
+    try {
+      const realFile = await realpathAsync(candidate);
+      if (realFile !== REAL_STATIC_ROOT && !realFile.startsWith(REAL_STATIC_ROOT + sep)) {
+        return "__FORBIDDEN__";
+      }
+      const file = Bun.file(realFile);
+      if (await file.exists()) {
+        return realFile;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+
+  return null;
+}
+
 const server = Bun.serve({
   port: LISTEN_PORT,
   async fetch(req) {
@@ -123,47 +155,21 @@ const server = Bun.serve({
         if (!staticEnabled) {
           response = Response.json({ error: "Not found" }, { status: 404 });
         } else {
-          // Path traversal + symlink protection
-          let decoded: string;
           try {
-            decoded = decodeURIComponent(pathname);
-          } catch {
-            return new Response("Bad request", { status: 400 });
-          }
-          const safePath = normalize(decoded).replace(/^(\.\.[\/\\])+/, "");
-          const resolved = resolve(STATIC_ROOT, safePath.replace(/^[\/\\]+/, ""));
-
-          // Quick check: relative path must not escape root
-          const rel = relative(STATIC_ROOT, resolved);
-          if (rel.startsWith("..")) {
-            response = Response.json({ error: "Forbidden" }, { status: 403 });
-          } else {
-            // Resolve symlinks and verify the real path is under root, then serve
-            try {
-              const realFile = await realpathAsync(resolved);
-              if (realFile !== REAL_STATIC_ROOT && !realFile.startsWith(REAL_STATIC_ROOT + sep)) {
-                response = Response.json({ error: "Forbidden" }, { status: 403 });
-              } else {
-                // Serve from the resolved real path
-                const file = Bun.file(realFile);
-                if (await file.exists()) {
-                  return serveStaticFile(realFile);
-                }
-                // SPA fallback: file not found (or is a directory), serve index.html
-                const indexFile = Bun.file(`${REAL_STATIC_ROOT}/index.html`);
-                if (await indexFile.exists()) {
-                  return serveStaticFile(`${REAL_STATIC_ROOT}/index.html`);
-                }
-                response = Response.json({ error: "Not found" }, { status: 404 });
-              }
-            } catch {
-              // realpath fails if file doesn't exist — try SPA fallback
+            const realFile = await resolveStaticCandidate(pathname);
+            if (realFile === "__FORBIDDEN__") {
+              response = Response.json({ error: "Forbidden" }, { status: 403 });
+            } else if (realFile) {
+              return serveStaticFile(realFile);
+            } else {
               const indexFile = Bun.file(`${REAL_STATIC_ROOT}/index.html`);
               if (await indexFile.exists()) {
                 return serveStaticFile(`${REAL_STATIC_ROOT}/index.html`);
               }
               response = Response.json({ error: "Not found" }, { status: 404 });
             }
+          } catch {
+            return new Response("Bad request", { status: 400 });
           }
         }
       } else {
