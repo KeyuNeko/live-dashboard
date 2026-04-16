@@ -1,6 +1,9 @@
 {
   "server_url": "https://your-domain.com",
   "token": "YOUR_TOKEN_HERE",
+  "device_id": "pc-1",
+  "device_name": "PC 1",
+  "pending_request_key": "",
   "interval_seconds": 5,
   "heartbeat_seconds": 60,
   "idle_threshold_seconds": 300,

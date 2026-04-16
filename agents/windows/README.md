@@ -12,14 +12,14 @@
 %LOCALAPPDATA%\LiveDashboardAgent\config.json
 ```
 
-如果服务端启用了 `ENROLL_SECRET`，设置窗口可以直接填写：
+如果服务端启用了管理员审批流，设置窗口可以直接填写：
 
 - 服务器地址
 - 设备 ID
 - 设备名称
-- 注册密钥
+- 提交接入申请
 
-然后点击“申请 Token”，客户端会向服务端注册并自动回填 token。
+申请提交后，管理员可在网页 `/admin` 中审批。审批通过后，客户端点击“检查审批状态”即可自动回填 token。
 
 ## 从源码运行
 
@@ -67,6 +67,9 @@
 |------|------|--------|
 | `server_url` | 后端地址 | 必填 |
 | `token` | 设备密钥（部署服务端时生成的） | 必填 |
+| `device_id` | 设备唯一标识 | 自动生成 |
+| `device_name` | 设备显示名称 | 自动生成 |
+| `pending_request_key` | 待审批申请编号 | `""` |
 | `interval_seconds` | 上报间隔（秒） | `5` |
 | `heartbeat_seconds` | AFK 时心跳间隔（秒） | `60` |
 | `idle_threshold_seconds` | 无操作多久后进入 AFK 模式（秒） | `300` |

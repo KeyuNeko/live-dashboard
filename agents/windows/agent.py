@@ -385,6 +385,9 @@ def validate_server_url(url: str) -> Optional[str]:
 _DEFAULT_CFG = {
     "server_url": "",
     "token": "",
+    "device_id": get_default_device_id(),
+    "device_name": get_default_device_name(),
+    "pending_request_key": "",
     "interval_seconds": 5,
     "heartbeat_seconds": 60,
     "idle_threshold_seconds": 300,
@@ -407,7 +410,7 @@ def load_config() -> dict:
     if not isinstance(cfg, dict):
         return dict(_DEFAULT_CFG)
 
-    for key in ("server_url", "token"):
+    for key in ("server_url", "token", "device_id", "device_name", "pending_request_key"):
         value = cfg.get(key, _DEFAULT_CFG[key])
         cfg[key] = value.strip() if isinstance(value, str) else _DEFAULT_CFG[key]
 
@@ -567,20 +570,18 @@ def show_message(title: str, message: str, error: bool = False) -> None:
         log.info("%s: %s", title, message)
 
 
-def request_token(
+def request_access(
     server_url: str,
-    enroll_secret: str,
     device_id: str,
     device_name: str,
-) -> Tuple[Optional[str], str]:
-    """Request a token from the backend enrollment endpoint."""
+) -> Tuple[str, Optional[str], str]:
+    """Submit an enrollment request or return an approved token."""
     session = requests.Session()
     session.trust_env = False
     try:
         response = session.post(
-            server_url.rstrip("/") + "/api/enroll-token",
+            server_url.rstrip("/") + "/api/device-enrollment/request",
             json={
-                "enroll_secret": enroll_secret,
                 "device_id": device_id,
                 "device_name": device_name,
                 "platform": "windows",
@@ -597,16 +598,52 @@ def request_token(
 
     if response.status_code != 200:
         error_text = payload.get("error") if isinstance(payload, dict) else None
-        return None, error_text or f"服务器返回 {response.status_code}"
+        return "error", None, error_text or f"服务器返回 {response.status_code}"
 
     token = payload.get("token") if isinstance(payload, dict) else None
-    if not isinstance(token, str) or not token.strip():
-        return None, "服务端未返回有效 token"
+    status = payload.get("status") if isinstance(payload, dict) else None
+    request_key = payload.get("request_key") if isinstance(payload, dict) else None
+    if status == "approved" and isinstance(token, str) and token.strip():
+        return "approved", token.strip(), "设备已批准，已拿到 token"
+    if status == "pending" and isinstance(request_key, str) and request_key.strip():
+        return "pending", request_key.strip(), "接入申请已提交，等待管理员审批"
+    return "error", None, "服务端返回了未知状态"
 
-    reused = bool(payload.get("reused")) if isinstance(payload, dict) else False
-    source = payload.get("source") if isinstance(payload, dict) else "db"
-    action = "复用" if reused else "创建"
-    return token.strip(), f"Token {action}成功（来源: {source}）"
+
+def check_enrollment_status(server_url: str, request_key: str) -> Tuple[str, Optional[str], str]:
+    """Poll the enrollment status by request key."""
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        response = session.get(
+            server_url.rstrip("/") + "/api/device-enrollment/status",
+            params={"request_key": request_key},
+            timeout=15,
+        )
+    except requests.RequestException as e:
+        return "error", None, f"请求失败: {e}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+
+    if response.status_code != 200:
+        error_text = payload.get("error") if isinstance(payload, dict) else None
+        return "error", None, error_text or f"服务器返回 {response.status_code}"
+
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status == "approved":
+        token = payload.get("token")
+        if isinstance(token, str) and token.strip():
+            return "approved", token.strip(), "管理员已批准，token 已返回"
+        return "error", None, "审批已通过，但服务端未返回 token"
+    if status == "rejected":
+        note = payload.get("admin_note") if isinstance(payload, dict) else ""
+        return "rejected", None, note or "管理员已拒绝该设备申请"
+    if status == "pending":
+        return "pending", None, "仍在等待管理员审批"
+    return "error", None, "服务端返回了未知状态"
 
 
 # ---------------------------------------------------------------------------
@@ -647,9 +684,9 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
     device_name_var = tk.StringVar(value=get_default_device_name())
     ttk.Entry(frame, textvariable=device_name_var, width=45).grid(row=3, column=1, pady=6, padx=(8, 0))
 
-    ttk.Label(frame, text="注册密钥:").grid(row=4, column=0, sticky="w", pady=6)
-    enroll_secret_var = tk.StringVar()
-    ttk.Entry(frame, textvariable=enroll_secret_var, width=45, show="*").grid(row=4, column=1, pady=6, padx=(8, 0))
+    ttk.Label(frame, text="申请编号:").grid(row=4, column=0, sticky="w", pady=6)
+    pending_request_var = tk.StringVar(value=cfg.get("pending_request_key", ""))
+    ttk.Entry(frame, textvariable=pending_request_var, width=45).grid(row=4, column=1, pady=6, padx=(8, 0))
 
     ttk.Label(frame, text="上报间隔 (秒):").grid(row=5, column=0, sticky="w", pady=6)
     interval_var = tk.IntVar(value=cfg.get("interval_seconds", 5))
@@ -668,38 +705,88 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
         row=8, column=0, columnspan=2, sticky="w", pady=6
     )
 
-    def on_request_token():
+    def save_partial_request_key(request_key: str) -> None:
+        draft_cfg = {
+            "server_url": url_var.get().strip(),
+            "token": token_var.get().strip(),
+            "device_id": device_id_var.get().strip(),
+            "device_name": device_name_var.get().strip(),
+            "pending_request_key": request_key,
+            "interval_seconds": interval_var.get(),
+            "heartbeat_seconds": heartbeat_var.get(),
+            "idle_threshold_seconds": idle_var.get(),
+            "enable_log": log_var.get(),
+        }
+        save_config(draft_cfg)
+
+    def on_request_access():
         url = url_var.get().strip()
-        enroll_secret = enroll_secret_var.get().strip()
         device_id = device_id_var.get().strip()
         device_name = device_name_var.get().strip()
 
         err = validate_server_url(url) if url else "服务器地址不能为空"
         if err:
-            messagebox.showerror("申请失败", err, parent=root)
-            return
-        if not enroll_secret:
-            messagebox.showerror("申请失败", "注册密钥不能为空", parent=root)
+            messagebox.showerror("提交失败", err, parent=root)
             return
         if not device_id:
-            messagebox.showerror("申请失败", "设备 ID 不能为空", parent=root)
+            messagebox.showerror("提交失败", "设备 ID 不能为空", parent=root)
             return
         if not device_name:
-            messagebox.showerror("申请失败", "设备名称不能为空", parent=root)
+            messagebox.showerror("提交失败", "设备名称不能为空", parent=root)
             return
 
-        token, status = request_token(url, enroll_secret, device_id, device_name)
-        if not token:
-            messagebox.showerror("申请失败", status, parent=root)
+        status, value, message = request_access(url, device_id, device_name)
+        if status == "error" or value is None:
+            messagebox.showerror("提交失败", message, parent=root)
             return
 
-        token_var.set(token)
-        messagebox.showinfo("申请成功", status, parent=root)
+        if status == "approved":
+            token_var.set(value)
+            pending_request_var.set("")
+            save_partial_request_key("")
+            messagebox.showinfo("已批准", message, parent=root)
+            return
+
+        pending_request_var.set(value)
+        save_partial_request_key(value)
+        messagebox.showinfo("已提交申请", f"{message}\n\n申请编号：{value}", parent=root)
+
+    def on_check_status():
+        url = url_var.get().strip()
+        request_key = pending_request_var.get().strip()
+        err = validate_server_url(url) if url else "服务器地址不能为空"
+        if err:
+            messagebox.showerror("检查失败", err, parent=root)
+            return
+        if not request_key:
+            messagebox.showerror("检查失败", "申请编号不能为空", parent=root)
+            return
+
+        status, value, message = check_enrollment_status(url, request_key)
+        if status == "approved" and value:
+            token_var.set(value)
+            pending_request_var.set("")
+            save_partial_request_key("")
+            messagebox.showinfo("审批通过", message, parent=root)
+            return
+        if status == "rejected":
+            pending_request_var.set("")
+            save_partial_request_key("")
+            messagebox.showwarning("审批未通过", message, parent=root)
+            return
+        if status == "pending":
+            save_partial_request_key(request_key)
+            messagebox.showinfo("仍在等待", message, parent=root)
+            return
+        messagebox.showerror("检查失败", message, parent=root)
 
     def on_save():
         new_cfg = {
             "server_url": url_var.get().strip(),
             "token": token_var.get().strip(),
+            "device_id": device_id_var.get().strip(),
+            "device_name": device_name_var.get().strip(),
+            "pending_request_key": pending_request_var.get().strip(),
             "interval_seconds": interval_var.get(),
             "heartbeat_seconds": heartbeat_var.get(),
             "idle_threshold_seconds": idle_var.get(),
@@ -717,7 +804,8 @@ def show_settings_dialog(current_config: Optional[dict] = None) -> Optional[dict
 
     btn_frame = ttk.Frame(frame)
     btn_frame.grid(row=9, column=0, columnspan=2, pady=16)
-    ttk.Button(btn_frame, text="申请 Token", command=on_request_token).pack(side="left", padx=12)
+    ttk.Button(btn_frame, text="提交接入申请", command=on_request_access).pack(side="left", padx=12)
+    ttk.Button(btn_frame, text="检查审批状态", command=on_check_status).pack(side="left", padx=12)
     ttk.Button(btn_frame, text="保存", command=on_save).pack(side="left", padx=12)
     ttk.Button(btn_frame, text="取消", command=root.destroy).pack(side="left", padx=12)
 
