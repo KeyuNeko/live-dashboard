@@ -48,13 +48,13 @@ echo "Token: $TOKEN  ← Agent 配置用"
 
 ## Agent 下载
 
-从 [GitHub Releases](https://github.com/Monika-Dream/live-dashboard/releases) 下载对应平台的客户端：
+从 [GitHub Releases](https://github.com/KeyuNeko/live-dashboard/releases) 下载对应平台的客户端：
 
 | 平台 | 下载文件 | 配置指南 |
 |------|---------|---------|
 | Windows | `live-dashboard-agent.exe` | [Wiki - Windows Agent](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-Windows) |
 | macOS | `live-dashboard-agent-macos.zip` | [Wiki - macOS Agent](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-macOS) |
-| Android | `live-dashboard.apk` | [Wiki - Android App](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-Android) |
+| Android | `live-dashboard-android-release.apk` | [Wiki - Android App](https://github.com/Monika-Dream/live-dashboard/wiki/Agent-配置-Android) |
 
 ## 管理员后台 / 设备审批
 

@@ -20,8 +20,10 @@ const DOWNLOAD_LINKS: DownloadLink[] = [
   {
     label: "Android App",
     hint: "下载 .apk",
-    href: "https://github.com/Monika-Dream/live-dashboard/releases/latest/download/live-dashboard.apk",
+    href: "https://github.com/KeyuNeko/live-dashboard/releases/download/custom-windows-agent-20260416/live-dashboard-android-release.apk",
     icon: "\u{1F4F1}",
+    version: "1.1.0",
+    sha256: "5E1198E1CF12F684EB39B79D6BB8D1429306885D6FD399AAAD04C5F2C28D59D4",
   },
 ];
 
